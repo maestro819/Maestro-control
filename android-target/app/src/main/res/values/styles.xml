@@ -1,1 +1,10 @@
+<resources>
+    <style name="Theme.Maestro" parent="android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:colorAccent">#18202A</item>
+        <item name="android:navigationBarColor">#F4F6F8</item>
+        <item name="android:statusBarColor">#F4F6F8</item>
+        <item name="android:windowLightStatusBar">true</item>
+    </style>
+</resources>
 
