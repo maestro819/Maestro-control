@@ -1,1 +1,51 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1.0">
+  <title>Maestro Device Control</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <main class="app">
+    <header>
+      <div>
+        <p class="eyebrow">MAESTRO</p>
+        <h1>Device Control</h1>
+        <p class="muted">Kontrol perangkat berdasarkan izin pengguna.</p>
+      </div>
+      <span class="badge offline">OFFLINE</span>
+    </header>
+
+    <section class="card">
+      <label for="device">Perangkat</label>
+      <select id="device">
+        <option value="">Memuat perangkat…</option>
+      </select>
+      <div id="status" class="status">Menyiapkan aplikasi…</div>
+    </section>
+
+    <section class="grid">
+      <div class="card permission"><b>Lokasi</b><span id="location">—</span></div>
+      <div class="card permission"><b>Kamera</b><span id="camera">—</span></div>
+      <div class="card permission"><b>Mikrofon</b><span id="microphone">—</span></div>
+      <div class="card permission"><b>Notifikasi</b><span id="notifications">—</span></div>
+    </section>
+
+    <section class="card">
+      <h2>Perintah</h2>
+      <p class="muted">
+        Perintah kamera dan mikrofon harus mengikuti izin serta batasan Android.
+      </p>
+      <div class="actions">
+        <button data-command="location">Minta lokasi terbaru</button>
+        <button data-command="camera">Permintaan kamera</button>
+        <button data-command="microphone">Permintaan mikrofon</button>
+      </div>
+    </section>
+  </main>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
 
