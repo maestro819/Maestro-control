@@ -2,7 +2,7 @@ create extension if not exists pgcrypto;
 
 create table if not exists public.devices (
   id uuid primary key default gen_random_uuid(),
-  owner_id uuid not null references auth.users(id) on delete cascade,
+  owner_id uuid not null default auth.uid() references auth.users(id) on delete cascade,
   device_name text not null,
   device_token text unique,
   is_online boolean not null default false,
@@ -10,9 +10,19 @@ create table if not exists public.devices (
   camera_permission boolean not null default false,
   microphone_permission boolean not null default false,
   notification_permission boolean not null default false,
+  last_lat double precision,
+  last_lng double precision,
+  location_updated_at timestamptz,
   last_seen_at timestamptz,
   created_at timestamptz not null default now()
 );
+
+-- Safe to re-run on an existing database: adds the new columns if this
+-- schema was already applied before the location fields were added.
+alter table public.devices add column if not exists last_lat double precision;
+alter table public.devices add column if not exists last_lng double precision;
+alter table public.devices add column if not exists location_updated_at timestamptz;
+alter table public.devices alter column owner_id set default auth.uid();
 
 create table if not exists public.device_commands (
   id uuid primary key default gen_random_uuid(),
