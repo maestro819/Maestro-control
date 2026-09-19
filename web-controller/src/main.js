@@ -2,8 +2,17 @@ import { createClient } from '@supabase/supabase-js'
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY
+const ONLINE_WINDOW_MS = 45 * 1000 // treat a device as online if it synced in the last 45s
 
 const els = {
+  loginPanel: document.querySelector('#loginPanel'),
+  loginForm: document.querySelector('#loginForm'),
+  loginEmail: document.querySelector('#loginEmail'),
+  loginPassword: document.querySelector('#loginPassword'),
+  loginStatus: document.querySelector('#loginStatus'),
+  appTopbar: document.querySelector('#appTopbar'),
+  appContent: document.querySelector('#appContent'),
+  logoutButton: document.querySelector('#logoutButton'),
   device: document.querySelector('#device'),
   deviceMeta: document.querySelector('#deviceMeta'),
   deviceStatus: document.querySelector('#deviceStatus'),
@@ -23,15 +32,22 @@ const els = {
   detailViews: [...document.querySelectorAll('.detail-view')],
   screenButtons: [...document.querySelectorAll('[data-screen]')],
   backButtons: [...document.querySelectorAll('[data-back]')],
+  mapLabel: document.querySelector('#locationView .map-label'),
 }
 
 let devices = []
 let supabase = null
 let activeScreen = 'dashboardView'
+let realtimeChannel = null
 
 function setStatus(message, kind = '') {
   els.status.textContent = message
   els.status.dataset.kind = kind
+}
+
+function isFresh(lastSeenAt) {
+  if (!lastSeenAt) return false
+  return Date.now() - new Date(lastSeenAt).getTime() < ONLINE_WINDOW_MS
 }
 
 function setOnline(online) {
@@ -47,30 +63,30 @@ function permissionText(value) {
   return value ? '✓ Diizinkan' : '⚠ Belum'
 }
 
+function renderLocation(device) {
+  if (!els.mapLabel) return
+  if (device?.last_lat != null && device?.last_lng != null) {
+    const updated = device.location_updated_at ? new Date(device.location_updated_at).toLocaleString('id-ID') : '-'
+    els.mapLabel.innerHTML = `LAST KNOWN POSITION<br><small>${device.last_lat.toFixed(5)}, ${device.last_lng.toFixed(5)} · ${updated}</small>`
+  } else {
+    els.mapLabel.innerHTML = 'LAST KNOWN POSITION<br><small>Belum ada data lokasi</small>'
+  }
+}
+
 function renderDevice(device) {
   const keys = ['location_permission', 'camera_permission', 'microphone_permission', 'notification_permission']
   const granted = keys.filter((key) => Boolean(device?.[key])).length
   els.accessCount.textContent = `${granted}/4`
   els.accessSummary.textContent = `${granted}/4 AKSES`
-  els.deviceMeta.textContent = device ? (device.is_online ? 'Terhubung dan siap dikontrol' : 'Perangkat sedang offline') : 'Belum ada perangkat'
+  const online = isFresh(device?.last_seen_at)
+  els.deviceMeta.textContent = device ? (online ? 'Terhubung dan siap dikontrol' : 'Perangkat sedang offline') : 'Belum ada perangkat'
   Object.entries(els.permission).forEach(([name, element]) => {
     const key = `${name}_permission`
     element.textContent = permissionText(device?.[key])
     element.style.color = device?.[key] ? '#69e8a8' : '#e6aa67'
   })
-  setOnline(Boolean(device?.is_online))
-}
-
-function demoDevices() {
-  return [{
-    id: 'demo-device',
-    device_name: 'Demo Android',
-    is_online: true,
-    location_permission: true,
-    camera_permission: true,
-    microphone_permission: true,
-    notification_permission: true,
-  }]
+  setOnline(online)
+  renderLocation(device)
 }
 
 function renderDevices() {
@@ -81,9 +97,11 @@ function renderDevices() {
     renderDevice(null)
     return
   }
+  const previous = els.device.value
   devices.forEach((device) => els.device.add(new Option(device.device_name, device.id)))
   els.device.disabled = false
-  renderDevice(devices[0])
+  els.device.value = devices.some((d) => d.id === previous) ? previous : devices[0].id
+  renderDevice(selectedDevice())
 }
 
 function selectedDevice() {
@@ -91,17 +109,11 @@ function selectedDevice() {
 }
 
 async function loadDevices() {
-  if (!supabase) {
-    devices = demoDevices()
-    renderDevices()
-    setStatus('Mode demo aktif. Hubungkan Supabase untuk perangkat nyata.', 'info')
-    return
-  }
-
+  if (!supabase) return
   setStatus('Memuat perangkat…')
   const { data, error } = await supabase
     .from('devices')
-    .select('id, device_name, is_online, location_permission, camera_permission, microphone_permission, notification_permission')
+    .select('id, device_name, last_seen_at, location_permission, camera_permission, microphone_permission, notification_permission, last_lat, last_lng, location_updated_at')
     .order('created_at', { ascending: false })
 
   if (error) {
@@ -113,19 +125,14 @@ async function loadDevices() {
 
   devices = data ?? []
   renderDevices()
-  setStatus(devices.length ? 'Perangkat siap dikontrol.' : 'Belum ada perangkat terdaftar.', 'success')
+  setStatus(devices.length ? 'Perangkat siap dikontrol.' : 'Belum ada perangkat terdaftar. Daftarkan lewat aplikasi target.', 'success')
 }
 
 async function sendCommand(command) {
   const device = selectedDevice()
-  if (!device) return
+  if (!device || !supabase) return
 
-  if (!supabase) {
-    setStatus(`Demo: ${command} dipanggil. Android belum menerima perintah.`, 'info')
-    return
-  }
-
-  setStatus(`Mengirim ${command}…`)
+  setStatus(`Mengirim perintah ${command}…`)
   const { error } = await supabase.from('device_commands').insert({
     device_id: device.id,
     command,
@@ -135,25 +142,13 @@ async function sendCommand(command) {
     setStatus(`Perintah gagal: ${error.message}`, 'error')
     return
   }
-  setStatus(`Perintah ${command} berhasil dikirim.`, 'success')
+  setStatus(`Perintah ${command} dikirim. Menunggu perangkat merespons…`, 'success')
 }
 
 function showScreen(screenId) {
   activeScreen = screenId
   els.dashboard.hidden = screenId !== 'dashboardView'
   els.detailViews.forEach((view) => { view.hidden = view.id !== screenId })
-  if (screenId === 'cameraView') {
-    document.querySelector('#cameraState').textContent = 'Menghubungkan otomatis…'
-    setTimeout(() => {
-      if (activeScreen === 'cameraView') document.querySelector('#cameraState').textContent = '● LIVE — koneksi siap'
-    }, 700)
-  }
-  if (screenId === 'microphoneView') {
-    document.querySelector('#audioState').textContent = 'Menghubungkan otomatis…'
-    setTimeout(() => {
-      if (activeScreen === 'microphoneView') document.querySelector('#audioState').textContent = '● LIVE — audio siap'
-    }, 700)
-  }
   window.scrollTo({ top: 0, behavior: 'smooth' })
 }
 
@@ -175,50 +170,90 @@ els.backButtons.forEach((button) => {
 
 document.querySelector('[data-command="location"]').addEventListener('click', () => sendCommand('location'))
 
+// Camera/microphone controls intentionally stay as visual placeholders only.
+// See project README: remote camera/mic activation and notification mirroring
+// are out of scope for this build.
 document.querySelector('#captureButton').addEventListener('click', () => {
-  setStatus('Permintaan foto diproses dari halaman Kamera.', 'info')
+  setStatus('Fitur pengambilan foto jarak jauh belum diaktifkan pada build ini.', 'info')
+})
+document.querySelector('#recordButton').addEventListener('click', () => {
+  setStatus('Fitur rekam kamera jarak jauh belum diaktifkan pada build ini.', 'info')
+})
+document.querySelector('#audioRecordButton').addEventListener('click', () => {
+  setStatus('Fitur rekam audio jarak jauh belum diaktifkan pada build ini.', 'info')
 })
 
-let recording = false
-document.querySelector('#recordButton').addEventListener('click', (event) => {
-  recording = !recording
-  const button = event.currentTarget
-  button.classList.toggle('recording', recording)
-  button.innerHTML = recording ? '<span></span> STOP RECORDING' : '<span></span> RECORD'
-  setStatus(recording ? 'Rekaman kamera dimulai.' : 'Rekaman kamera dihentikan.', 'info')
-})
+// ---- Auth gate --------------------------------------------------------------------------
 
-let audioRecording = false
-let audioSeconds = 0
-let audioTimer = null
-document.querySelector('#audioRecordButton').addEventListener('click', (event) => {
-  audioRecording = !audioRecording
-  const button = event.currentTarget
-  button.classList.toggle('recording', audioRecording)
-  if (audioRecording) {
-    audioSeconds = 0
-    button.innerHTML = '<span></span> STOP RECORDING'
-    audioTimer = setInterval(() => {
-      audioSeconds += 1
-      const m = String(Math.floor(audioSeconds / 60)).padStart(2, '0')
-      const s = String(audioSeconds % 60).padStart(2, '0')
-      document.querySelector('#timer').textContent = `${m}:${s}`
-    }, 1000)
-  } else {
-    clearInterval(audioTimer)
-    button.innerHTML = '<span></span> RECORD'
-    setStatus('Rekaman suara dihentikan.', 'info')
-  }
-})
-
-if (SUPABASE_URL && SUPABASE_ANON_KEY) {
-  supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
+function showLoggedOut(message) {
+  els.loginPanel.hidden = false
+  els.appTopbar.hidden = true
+  els.appContent.hidden = true
+  if (message) els.loginStatus.textContent = message
 }
 
-loadDevices()
-if (supabase) {
-  supabase
+function showLoggedIn() {
+  els.loginPanel.hidden = true
+  els.appTopbar.hidden = false
+  els.appContent.hidden = false
+}
+
+async function startRealtime() {
+  if (realtimeChannel) await supabase.removeChannel(realtimeChannel)
+  realtimeChannel = supabase
     .channel('devices-status')
     .on('postgres_changes', { event: '*', schema: 'public', table: 'devices' }, loadDevices)
     .subscribe()
 }
+
+els.loginForm?.addEventListener('submit', async (event) => {
+  event.preventDefault()
+  if (!supabase) {
+    els.loginStatus.textContent = 'Supabase belum dikonfigurasi (isi .env.local).'
+    return
+  }
+  els.loginStatus.textContent = 'Memproses…'
+  const { error } = await supabase.auth.signInWithPassword({
+    email: els.loginEmail.value.trim(),
+    password: els.loginPassword.value,
+  })
+  if (error) {
+    els.loginStatus.textContent = `Gagal masuk: ${error.message}`
+  }
+})
+
+els.logoutButton?.addEventListener('click', async () => {
+  if (!supabase) return
+  await supabase.auth.signOut()
+})
+
+async function init() {
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+    showLoggedOut('Supabase belum dikonfigurasi. Isi VITE_SUPABASE_URL dan VITE_SUPABASE_ANON_KEY di web-controller/.env.local.')
+    return
+  }
+
+  supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
+
+  supabase.auth.onAuthStateChange((_event, session) => {
+    if (session) {
+      showLoggedIn()
+      loadDevices()
+      startRealtime()
+    } else {
+      showLoggedOut('Masuk dengan akun Supabase kamu untuk mengontrol perangkat milikmu.')
+      devices = []
+    }
+  })
+
+  const { data: { session } } = await supabase.auth.getSession()
+  if (session) {
+    showLoggedIn()
+    loadDevices()
+    startRealtime()
+  } else {
+    showLoggedOut()
+  }
+}
+
+init()
