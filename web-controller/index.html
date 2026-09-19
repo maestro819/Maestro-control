@@ -8,7 +8,19 @@
 </head>
 <body>
   <main class="app">
-    <header class="topbar">
+    <section class="device-panel" id="loginPanel" hidden>
+      <div class="section-label">MASUK</div>
+      <div id="loginStatus" class="status" aria-live="polite">Masuk dengan akun Supabase kamu untuk mengontrol perangkat milikmu.</div>
+      <form id="loginForm">
+        <input id="loginEmail" type="email" placeholder="Email" autocomplete="username" required
+               style="width:100%;margin-top:10px;padding:12px;border-radius:10px;border:1px solid #213b56;background:#0c1828;color:#dceaff">
+        <input id="loginPassword" type="password" placeholder="Password" autocomplete="current-password" required
+               style="width:100%;margin-top:10px;padding:12px;border-radius:10px;border:1px solid #213b56;background:#0c1828;color:#dceaff">
+        <button type="submit" class="primary-button" style="width:100%;margin-top:10px">Masuk</button>
+      </form>
+    </section>
+
+    <header class="topbar" id="appTopbar" hidden>
       <div>
         <div class="brand"><span class="brand-dot"></span> MAESTRO</div>
         <h1>Control Center</h1>
@@ -16,6 +28,7 @@
       <span class="badge offline">OFFLINE</span>
     </header>
 
+    <div id="appContent" hidden>
     <section class="device-panel">
       <div class="section-label">PERANGKAT</div>
       <div class="device-row">
@@ -127,6 +140,8 @@
         <div class="empty-state"><div>🔔</div><h3>Belum ada notifikasi</h3><p>Notifikasi dari perangkat akan tampil di sini.</p></div>
       </div>
     </section>
+    <button class="back-button" id="logoutButton" type="button">Keluar</button>
+    </div>
   </main>
   <script type="module" src="/src/main.js"></script>
 </body>
