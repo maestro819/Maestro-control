@@ -3,49 +3,129 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1.0">
-  <title>Maestro Device Control</title>
+  <meta name="theme-color" content="#08111f">
+  <title>Maestro Control</title>
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
   <main class="app">
-    <header>
-      <div>
-        <p class="eyebrow">MAESTRO</p>
-        <h1>Device Control</h1>
-        <p class="muted">Kontrol perangkat berdasarkan izin pengguna.</p>
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark">M</div>
+        <div>
+          <p class="eyebrow">MAESTRO</p>
+          <h1>Control Center</h1>
+        </div>
       </div>
-      <span class="badge offline">OFFLINE</span>
+      <span class="badge offline" id="onlineBadge">OFFLINE</span>
     </header>
 
-    <section class="card">
-      <label for="device">Perangkat</label>
-      <select id="device">
-        <option value="">Memuat perangkat…</option>
-      </select>
-      <div id="status" class="status">Menyiapkan aplikasi…</div>
+    <section id="dashboardView" class="view active">
+      <section class="device-card">
+        <div class="device-info">
+          <div class="device-icon">📱</div>
+          <div>
+            <span class="section-label">PERANGKAT TERPILIH</span>
+            <select id="device">
+              <option value="">Memuat perangkat…</option>
+            </select>
+            <div class="device-status"><span class="status-dot"></span><span id="status">Menyiapkan aplikasi…</span></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="hero">
+        <span class="section-label">REMOTE CONTROL</span>
+        <h2>Kontrol perangkat<br><strong>langsung dari sini.</strong></h2>
+        <p>Pilih fitur untuk membuka panel kontrol dan melihat data perangkat.</p>
+      </section>
+
+      <section class="feature-grid">
+        <button class="feature-card location-card" data-screen="location">
+          <span class="feature-icon">📍</span>
+          <span class="feature-title">Lokasi</span>
+          <span class="feature-desc">Lihat posisi perangkat di peta</span>
+          <span class="feature-arrow">→</span>
+        </button>
+        <button class="feature-card camera-card" data-screen="camera">
+          <span class="feature-icon">📷</span>
+          <span class="feature-title">Kamera</span>
+          <span class="feature-desc">Live camera &amp; rekam video</span>
+          <span class="feature-arrow">→</span>
+        </button>
+        <button class="feature-card mic-card" data-screen="microphone">
+          <span class="feature-icon">🎙️</span>
+          <span class="feature-title">Mikrofon</span>
+          <span class="feature-desc">Live audio &amp; rekaman suara</span>
+          <span class="feature-arrow">→</span>
+        </button>
+        <button class="feature-card notification-card" data-screen="notifications">
+          <span class="feature-icon">🔔</span>
+          <span class="feature-title">Notifikasi</span>
+          <span class="feature-desc">Lihat notifikasi perangkat</span>
+          <span class="feature-arrow">→</span>
+        </button>
+      </section>
+
+      <section class="permission-panel">
+        <div class="panel-heading">
+          <div><span class="section-label">STATUS AKSES</span><h3>Izin perangkat</h3></div>
+        </div>
+        <div class="permission-grid">
+          <div class="permission-item"><span>📍 Lokasi</span><b id="location">—</b></div>
+          <div class="permission-item"><span>📷 Kamera</span><b id="camera">—</b></div>
+          <div class="permission-item"><span>🎙️ Mikrofon</span><b id="microphone">—</b></div>
+          <div class="permission-item"><span>🔔 Notifikasi</span><b id="notifications">—</b></div>
+        </div>
+      </section>
+      <div id="statusMessage" class="status-message"></div>
     </section>
 
-    <section class="grid">
-      <div class="card permission"><b>Lokasi</b><span id="location">—</span></div>
-      <div class="card permission"><b>Kamera</b><span id="camera">—</span></div>
-      <div class="card permission"><b>Mikrofon</b><span id="microphone">—</span></div>
-      <div class="card permission"><b>Notifikasi</b><span id="notifications">—</span></div>
+    <section id="locationView" class="view detail-view">
+      <button class="back-button" data-back>← Dashboard</button>
+      <div class="detail-header"><div><span class="section-label">LOCATION</span><h2>Lokasi perangkat</h2><p>Posisi terakhir yang diterima dari perangkat target.</p></div><span class="live-pill">● LIVE</span></div>
+      <div class="map-panel">
+        <div class="map-grid"></div><div class="map-pin">📍</div>
+        <div class="map-placeholder"><strong>PETA AKAN TAMPIL DI SINI</strong><span>Terhubung ke layanan peta pada tahap berikutnya</span></div>
+        <div class="map-bottom"><div><small>STATUS</small><strong id="locationLiveStatus">Menunggu data lokasi</strong></div><button class="secondary-button" data-command="location">↻ Refresh lokasi</button></div>
+      </div>
     </section>
 
-    <section class="card">
-      <h2>Perintah</h2>
-      <p class="muted">
-        Perintah kamera dan mikrofon harus mengikuti izin serta batasan Android.
-      </p>
-      <div class="actions">
-        <button data-command="location">Minta lokasi terbaru</button>
-        <button data-command="camera">Permintaan kamera</button>
-        <button data-command="microphone">Permintaan mikrofon</button>
+    <section id="cameraView" class="view detail-view">
+      <button class="back-button" data-back>← Dashboard</button>
+      <div class="detail-header"><div><span class="section-label">CAMERA</span><h2>Kamera perangkat</h2><p>Panel live camera dan kontrol rekaman.</p></div><span class="live-pill">● LIVE</span></div>
+      <div class="camera-panel">
+        <div class="camera-preview"><div class="preview-icon">📷</div><span>LIVE CAMERA PREVIEW</span><small>Feed kamera akan terhubung pada tahap integrasi Android</small><div class="camera-status">● STANDBY</div></div>
+        <div class="camera-controls">
+          <div class="control-row"><span>Kamera</span><button class="seg active">Belakang</button><button class="seg">Depan</button></div>
+          <div class="control-row"><span>Mode</span><button class="seg active">Normal</button><button class="seg">🌙 Low Light</button><button class="seg">🔦 Flash</button></div>
+          <div class="record-row"><button class="capture-button">●</button><button class="record-button" data-command="camera">Mulai Rekam</button></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="microphoneView" class="view detail-view">
+      <button class="back-button" data-back>← Dashboard</button>
+      <div class="detail-header"><div><span class="section-label">MICROPHONE</span><h2>Mikrofon perangkat</h2><p>Panel audio live dan kontrol rekaman.</p></div><span class="live-pill">● LIVE</span></div>
+      <div class="audio-panel">
+        <div class="audio-status"><span class="pulse-dot"></span><span>Menunggu koneksi audio</span><strong id="audioTimer">00:00</strong></div>
+        <div class="waveform" aria-label="Audio waveform">
+          <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+        </div>
+        <div class="volume-row"><span>🔈</span><div class="volume-track"><div></div></div><span>🔊</span></div>
+        <div class="record-row"><button class="record-button" data-command="microphone">Mulai Rekam</button></div>
+        <p class="privacy-note">Audio live/rekaman akan membutuhkan izin mikrofon dan koneksi perangkat pada tahap integrasi Android.</p>
+      </div>
+    </section>
+
+    <section id="notificationsView" class="view detail-view">
+      <button class="back-button" data-back>← Dashboard</button>
+      <div class="detail-header"><div><span class="section-label">NOTIFICATION CENTER</span><h2>Notifikasi perangkat</h2><p>Daftar notifikasi yang diterima dari perangkat target.</p></div><span class="live-pill">● LIVE</span></div>
+      <div class="notification-panel">
+        <div class="empty-state"><div>🔔</div><strong>Belum ada notifikasi</strong><span>Notifikasi perangkat akan muncul di sini setelah integrasi Android aktif.</span></div>
       </div>
     </section>
   </main>
-
   <script type="module" src="/src/main.js"></script>
 </body>
 </html>
-
