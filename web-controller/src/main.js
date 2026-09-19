@@ -6,12 +6,12 @@ const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY
 const els = {
   device: document.querySelector('#device'),
   status: document.querySelector('#status'),
-  badge: document.querySelector('.badge'),
+  statusMessage: document.querySelector('#statusMessage'),
+  badge: document.querySelector('#onlineBadge'),
   location: document.querySelector('#location'),
   camera: document.querySelector('#camera'),
   microphone: document.querySelector('#microphone'),
   notifications: document.querySelector('#notifications'),
-  buttons: [...document.querySelectorAll('[data-command]')],
 }
 
 let devices = []
@@ -26,7 +26,8 @@ const permissionLabels = {
 
 function setStatus(message, kind = '') {
   els.status.textContent = message
-  els.status.dataset.kind = kind
+  els.statusMessage.textContent = message
+  els.statusMessage.dataset.kind = kind
 }
 
 function setBadge(online) {
@@ -39,30 +40,26 @@ function formatPermission(value) {
   return value ? 'Diizinkan' : 'Belum diizinkan'
 }
 
-function renderDevices() {
-  els.device.replaceChildren()
-
-  if (!devices.length) {
-    els.device.add(new Option('Belum ada perangkat', ''))
-    els.device.disabled = true
-    els.buttons.forEach((button) => { button.disabled = true })
-    renderDevice(null)
-    return
-  }
-
-  devices.forEach((device) => {
-    els.device.add(new Option(device.device_name, device.id))
-  })
-  els.device.disabled = false
-  els.buttons.forEach((button) => { button.disabled = false })
-  renderDevice(devices[0])
-}
-
 function renderDevice(device) {
   Object.entries(permissionLabels).forEach(([key, element]) => {
     element.textContent = device ? formatPermission(device[key]) : '—'
+    element.classList.toggle('allowed', Boolean(device?.[key]))
   })
   setBadge(Boolean(device?.is_online))
+}
+
+function renderDevices() {
+  els.device.replaceChildren()
+  if (!devices.length) {
+    els.device.add(new Option('Belum ada perangkat', ''))
+    els.device.disabled = true
+    renderDevice(null)
+    return
+  }
+  devices.forEach((device) => els.device.add(new Option(device.device_name, device.id)))
+  els.device.disabled = false
+  els.device.value = devices[0].id
+  renderDevice(devices[0])
 }
 
 function selectedDevice() {
@@ -75,8 +72,8 @@ function demoDevices() {
     device_name: 'Demo Android',
     is_online: true,
     location_permission: true,
-    camera_permission: false,
-    microphone_permission: false,
+    camera_permission: true,
+    microphone_permission: true,
     notification_permission: true,
   }]
 }
@@ -85,7 +82,7 @@ async function loadDevices() {
   if (!supabase) {
     devices = demoDevices()
     renderDevices()
-    setStatus('Mode demo aktif. Isi environment Supabase untuk memakai perangkat nyata.', 'info')
+    setStatus('Mode demo aktif — UI siap diuji.', 'info')
     return
   }
 
@@ -104,7 +101,7 @@ async function loadDevices() {
 
   devices = data ?? []
   renderDevices()
-  setStatus(devices.length ? 'Perangkat siap dikontrol.' : 'Belum ada perangkat terdaftar.', 'success')
+  setStatus(devices.length ? 'Perangkat siap dikontrol.' : 'Belum ada perangkat terdaftar.', devices.length ? 'success' : '')
 }
 
 async function sendCommand(command) {
@@ -112,17 +109,15 @@ async function sendCommand(command) {
   if (!device) return
 
   if (!supabase) {
-    setStatus(`Demo: perintah ${command} dicatat, tetapi belum dikirim ke Android.`, 'info')
+    setStatus(`Demo: perintah ${command} dicatat. Backend live belum diaktifkan.`, 'info')
     return
   }
 
-  els.buttons.forEach((button) => { button.disabled = true })
   setStatus(`Mengirim perintah ${command}…`)
   const { error } = await supabase.from('device_commands').insert({
     device_id: device.id,
     command,
   })
-  els.buttons.forEach((button) => { button.disabled = false })
 
   if (error) {
     setStatus(`Perintah gagal dikirim: ${error.message}`, 'error')
@@ -131,16 +126,32 @@ async function sendCommand(command) {
   setStatus(`Perintah ${command} berhasil dikirim.`, 'success')
 }
 
-els.device.addEventListener('change', () => renderDevice(selectedDevice()))
-els.buttons.forEach((button) => {
+function showView(name) {
+  document.querySelectorAll('.view').forEach((view) => view.classList.remove('active'))
+  document.querySelector(`#${name}View`).classList.add('active')
+  window.scrollTo({ top: 0, behavior: 'smooth' })
+}
+
+document.querySelectorAll('[data-screen]').forEach((button) => {
+  button.addEventListener('click', () => showView(button.dataset.screen))
+})
+
+document.querySelectorAll('[data-back]').forEach((button) => {
+  button.addEventListener('click', () => showView('dashboard'))
+})
+
+document.querySelectorAll('[data-command]').forEach((button) => {
   button.addEventListener('click', () => sendCommand(button.dataset.command))
 })
+
+els.device.addEventListener('change', () => renderDevice(selectedDevice()))
 
 if (SUPABASE_URL && SUPABASE_ANON_KEY) {
   supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
 }
 
 loadDevices()
+
 if (supabase) {
   supabase
     .channel('devices-status')
