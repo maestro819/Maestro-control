@@ -10,6 +10,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.text.InputType;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.LinearLayout;
@@ -68,6 +69,8 @@ public class MainActivity extends Activity {
     private EditText urlInput;
     private EditText keyInput;
     private EditText deviceInput;
+    private EditText emailInput;
+    private EditText passwordInput;
     private EditText tokenInput;
 
     @Override
@@ -95,10 +98,16 @@ public class MainActivity extends Activity {
         urlInput = field("Supabase URL", prefs.getString("url", ""));
         keyInput = field("Supabase anon key", prefs.getString("key", ""));
         deviceInput = field("Device token (bebas, unik)", prefs.getString("device", UUID.randomUUID().toString()));
-        tokenInput = field("User access token (dari web-controller)", prefs.getString("token", ""));
+        emailInput = field("Email akun Supabase (cara termudah)", prefs.getString("email", ""));
+        emailInput.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS);
+        passwordInput = field("Password (tidak disimpan, hanya untuk masuk)", "");
+        passwordInput.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        tokenInput = field("User access token (opsional bila pakai email/password)", prefs.getString("token", ""));
         box.addView(urlInput);
         box.addView(keyInput);
         box.addView(deviceInput);
+        box.addView(emailInput);
+        box.addView(passwordInput);
         box.addView(tokenInput);
 
         Button save = new Button(this);
@@ -124,13 +133,50 @@ public class MainActivity extends Activity {
     }
 
     private void saveAndRequestPermissions() {
-        prefs.edit()
+        final String newToken = tokenInput.getText().toString().trim();
+        final boolean tokenChangedByHand = !newToken.equals(prefs.getString("token", ""));
+        SharedPreferences.Editor editor = prefs.edit()
                 .putString("url", urlInput.getText().toString().trim())
                 .putString("key", keyInput.getText().toString().trim())
                 .putString("device", deviceInput.getText().toString().trim())
-                .putString("token", tokenInput.getText().toString().trim())
-                .apply();
+                .putString("email", emailInput.getText().toString().trim())
+                .putString("token", newToken);
+        if (tokenChangedByHand) {
+            // A token pasted by hand replaces any email/password session.
+            editor.remove("refresh").remove("expires_at");
+        }
+        editor.apply();
 
+        final String email = emailInput.getText().toString().trim();
+        final String password = passwordInput.getText().toString();
+        if (!email.isEmpty() && !password.isEmpty()) {
+            status.setText("Masuk ke Supabase...");
+            executor.execute(() -> {
+                JSONObject body = new JSONObject();
+                String error;
+                try {
+                    body.put("email", email);
+                    body.put("password", password);
+                    error = requestSession("password", body);
+                } catch (Exception failure) {
+                    error = failure.getMessage();
+                }
+                final String result = error;
+                handler.post(() -> {
+                    if (result == null) {
+                        passwordInput.setText("");
+                        requestRuntimePermissions();
+                    } else {
+                        status.setText("Gagal masuk: " + result);
+                    }
+                });
+            });
+        } else {
+            requestRuntimePermissions();
+        }
+    }
+
+    private void requestRuntimePermissions() {
         if (Build.VERSION.SDK_INT >= 23) {
             requestPermissions(new String[] {
                     Manifest.permission.ACCESS_FINE_LOCATION,
@@ -142,6 +188,71 @@ public class MainActivity extends Activity {
         } else {
             onPermissionsUpdated();
         }
+    }
+
+    // ---- Session handling (email/password sign-in + automatic token refresh) --------------
+
+    /** Calls Supabase Auth /token. Returns null on success (session saved), else an error message. */
+    private String requestSession(String grantType, JSONObject body) {
+        try {
+            final String base = prefs.getString("url", "").replaceAll("/$", "");
+            final String key = prefs.getString("key", "");
+            HttpURLConnection connection = (HttpURLConnection) new URL(
+                    base + "/auth/v1/token?grant_type=" + grantType).openConnection();
+            connection.setRequestMethod("POST");
+            connection.setDoOutput(true);
+            connection.setRequestProperty("Content-Type", "application/json");
+            connection.setRequestProperty("apikey", key);
+            try (OutputStream out = connection.getOutputStream()) {
+                out.write(body.toString().getBytes(StandardCharsets.UTF_8));
+            }
+
+            int code = connection.getResponseCode();
+            String raw = readStream(code < 300 ? connection.getInputStream() : connection.getErrorStream());
+            if (code >= 300) {
+                String message = raw;
+                try {
+                    JSONObject err = new JSONObject(raw);
+                    message = err.optString("msg", err.optString("error_description", err.optString("message", raw)));
+                } catch (Exception notJson) {
+                    // keep the raw body
+                }
+                return "HTTP " + code + ": " + message;
+            }
+
+            JSONObject session = new JSONObject(raw);
+            prefs.edit()
+                    .putString("token", session.getString("access_token"))
+                    .putString("refresh", session.optString("refresh_token", ""))
+                    .putLong("expires_at", System.currentTimeMillis() / 1000L + session.optLong("expires_in", 3600L))
+                    .apply();
+            return null;
+        } catch (Exception error) {
+            return error.getMessage();
+        }
+    }
+
+    /** Returns a usable access token, refreshing it first when a refresh token is stored and it is about to expire. */
+    private synchronized String currentToken() {
+        String token = prefs.getString("token", "");
+        String refresh = prefs.getString("refresh", "");
+        long expiresAt = prefs.getLong("expires_at", 0L);
+        long now = System.currentTimeMillis() / 1000L;
+        if (!refresh.isEmpty() && (token.isEmpty() || now >= expiresAt - 60)) {
+            try {
+                JSONObject body = new JSONObject();
+                body.put("refresh_token", refresh);
+                String error = requestSession("refresh_token", body);
+                if (error != null) {
+                    handler.post(() -> status.setText("Sesi habis, masuk ulang dengan email/password. (" + error + ")"));
+                } else {
+                    token = prefs.getString("token", token);
+                }
+            } catch (Exception ignored) {
+                // fall through with the old token; the request will report the HTTP error
+            }
+        }
+        return token;
     }
 
     @Override
@@ -166,22 +277,21 @@ public class MainActivity extends Activity {
         return !prefs.getString("url", "").isEmpty()
                 && !prefs.getString("key", "").isEmpty()
                 && !prefs.getString("device", "").isEmpty()
-                && !prefs.getString("token", "").isEmpty();
+                && (!prefs.getString("token", "").isEmpty() || !prefs.getString("refresh", "").isEmpty());
     }
 
     // ---- Device registration / heartbeat -------------------------------------------------
 
     private void syncDeviceStatus() {
         if (!configReady()) {
-            handler.post(() -> status.setText("Isi Supabase URL, anon key, device token, dan access token."));
+            handler.post(() -> status.setText("Isi Supabase URL, anon key, device token, lalu email + password (atau access token)."));
             return;
         }
         final String base = prefs.getString("url", "").replaceAll("/$", "");
         final String deviceToken = prefs.getString("device", "");
         final String key = prefs.getString("key", "");
-        final String token = prefs.getString("token", "");
-
         executor.execute(() -> {
+            final String token = currentToken();
             try {
                 JSONObject body = new JSONObject();
                 body.put("device_token", deviceToken);
@@ -235,9 +345,8 @@ public class MainActivity extends Activity {
 
         final String base = prefs.getString("url", "").replaceAll("/$", "");
         final String key = prefs.getString("key", "");
-        final String token = prefs.getString("token", "");
-
         executor.execute(() -> {
+            final String token = currentToken();
             try {
                 String endpoint = base + "/rest/v1/device_commands?device_id=eq."
                         + URLEncoder.encode(internalId, "UTF-8")
@@ -290,9 +399,8 @@ public class MainActivity extends Activity {
         String internalId = prefs.getString("internal_id", "");
         final String base = prefs.getString("url", "").replaceAll("/$", "");
         final String key = prefs.getString("key", "");
-        final String token = prefs.getString("token", "");
-
         executor.execute(() -> {
+            final String token = currentToken();
             try {
                 JSONObject body = new JSONObject();
                 body.put("last_lat", lat);
@@ -319,9 +427,8 @@ public class MainActivity extends Activity {
     private void updateCommandStatus(String commandId, String newStatus) {
         final String base = prefs.getString("url", "").replaceAll("/$", "");
         final String key = prefs.getString("key", "");
-        final String token = prefs.getString("token", "");
-
         executor.execute(() -> {
+            final String token = currentToken();
             try {
                 JSONObject body = new JSONObject();
                 body.put("status", newStatus);
