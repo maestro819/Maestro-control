@@ -1,8 +1,9 @@
 import { createClient } from '@supabase/supabase-js'
 
-const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL
-const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY
+const SUPABASE_URL = (import.meta.env.VITE_SUPABASE_URL || '').trim().replace(/\/+$/, '')
+const SUPABASE_ANON_KEY = (import.meta.env.VITE_SUPABASE_ANON_KEY || '').trim()
 const ONLINE_WINDOW_MS = 45 * 1000 // treat a device as online if it synced in the last 45s
+const REFRESH_MS = 15 * 1000 // re-check device freshness so ONLINE/OFFLINE stays accurate
 
 const els = {
   loginPanel: document.querySelector('#loginPanel'),
@@ -39,6 +40,8 @@ let devices = []
 let supabase = null
 let activeScreen = 'dashboardView'
 let realtimeChannel = null
+let refreshTimer = null
+let currentUserId = null
 
 function setStatus(message, kind = '') {
   els.status.textContent = message
@@ -108,24 +111,32 @@ function selectedDevice() {
   return devices.find((device) => device.id === els.device.value) ?? null
 }
 
-async function loadDevices() {
+async function loadDevices({ silent = false } = {}) {
   if (!supabase) return
-  setStatus('Memuat perangkat…')
+  if (!silent) setStatus('Memuat perangkat…')
   const { data, error } = await supabase
     .from('devices')
     .select('id, device_name, last_seen_at, location_permission, camera_permission, microphone_permission, notification_permission, last_lat, last_lng, location_updated_at')
     .order('created_at', { ascending: false })
 
   if (error) {
+    if (silent) return // transient error during background refresh: keep what is on screen
     devices = []
     renderDevices()
     setStatus(`Gagal memuat perangkat: ${error.message}`, 'error')
     return
   }
 
-  devices = data ?? []
+  const next = data ?? []
+  if (silent && JSON.stringify(next) === JSON.stringify(devices)) {
+    renderDevice(selectedDevice()) // same data, only re-evaluate ONLINE/OFFLINE
+    return
+  }
+  devices = next
   renderDevices()
-  setStatus(devices.length ? 'Perangkat siap dikontrol.' : 'Belum ada perangkat terdaftar. Daftarkan lewat aplikasi target.', 'success')
+  if (!silent) {
+    setStatus(devices.length ? 'Perangkat siap dikontrol.' : 'Belum ada perangkat terdaftar. Daftarkan lewat aplikasi target.', 'success')
+  }
 }
 
 async function sendCommand(command) {
@@ -198,12 +209,56 @@ function showLoggedIn() {
   els.appContent.hidden = false
 }
 
+async function stopRealtime() {
+  if (!realtimeChannel || !supabase) return
+  const channel = realtimeChannel
+  realtimeChannel = null
+  try { await supabase.removeChannel(channel) } catch { /* ignore */ }
+}
+
 async function startRealtime() {
-  if (realtimeChannel) await supabase.removeChannel(realtimeChannel)
+  await stopRealtime()
   realtimeChannel = supabase
     .channel('devices-status')
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'devices' }, loadDevices)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'devices' }, () => loadDevices())
     .subscribe()
+}
+
+function startRefreshTimer() {
+  stopRefreshTimer()
+  refreshTimer = setInterval(() => loadDevices({ silent: true }), REFRESH_MS)
+}
+
+function stopRefreshTimer() {
+  if (refreshTimer) {
+    clearInterval(refreshTimer)
+    refreshTimer = null
+  }
+}
+
+function projectHost() {
+  try { return new URL(SUPABASE_URL).host } catch { return SUPABASE_URL }
+}
+
+function loginErrorMessage(error) {
+  const raw = error?.message || String(error)
+  const msg = raw.toLowerCase()
+  const code = error?.code || ''
+  let hint = ''
+  if (msg.includes('invalid login credentials')) {
+    hint = 'Email/password salah, atau user belum dibuat di Supabase (Authentication → Users).'
+  } else if (msg.includes('email not confirmed')) {
+    hint = 'Email user belum dikonfirmasi. Konfirmasi user di Supabase (Authentication → Users) atau matikan "Confirm email".'
+  } else if (code === 'email_provider_disabled' || msg.includes('email logins are disabled') || msg.includes('provider is not enabled')) {
+    hint = 'Login email dimatikan. Aktifkan di Supabase → Authentication → Providers → Email.'
+  } else if (msg.includes('secret api key')) {
+    hint = 'Yang terpasang adalah key rahasia (service_role/secret). Pakai anon/publishable key di VITE_SUPABASE_ANON_KEY.'
+  } else if (msg.includes('invalid api key') || msg.includes('apikey')) {
+    hint = 'Anon key tidak valid. Cek VITE_SUPABASE_ANON_KEY di Vercel lalu redeploy.'
+  } else if (msg.includes('failed to fetch') || msg.includes('network') || msg.includes('load failed')) {
+    hint = 'Tidak bisa menjangkau Supabase. Cek VITE_SUPABASE_URL dan koneksi internet.'
+  }
+  return `${hint ? hint + ' ' : ''}(${raw}) [proyek: ${projectHost()}]`
 }
 
 els.loginForm?.addEventListener('submit', async (event) => {
@@ -212,13 +267,23 @@ els.loginForm?.addEventListener('submit', async (event) => {
     els.loginStatus.textContent = 'Supabase belum dikonfigurasi (isi .env.local).'
     return
   }
+  const submitButton = els.loginForm.querySelector('button[type="submit"]')
+  if (submitButton) submitButton.disabled = true
   els.loginStatus.textContent = 'Memproses…'
-  const { error } = await supabase.auth.signInWithPassword({
-    email: els.loginEmail.value.trim(),
-    password: els.loginPassword.value,
-  })
-  if (error) {
-    els.loginStatus.textContent = `Gagal masuk: ${error.message}`
+  try {
+    const { error } = await supabase.auth.signInWithPassword({
+      email: els.loginEmail.value.trim().toLowerCase(),
+      password: els.loginPassword.value,
+    })
+    if (error) {
+      els.loginStatus.textContent = `Gagal masuk: ${loginErrorMessage(error)}`
+    } else {
+      els.loginPassword.value = ''
+    }
+  } catch (error) {
+    els.loginStatus.textContent = `Gagal masuk: ${loginErrorMessage(error)}`
+  } finally {
+    if (submitButton) submitButton.disabled = false
   }
 })
 
@@ -227,33 +292,48 @@ els.logoutButton?.addEventListener('click', async () => {
   await supabase.auth.signOut()
 })
 
+// Called for every auth event (INITIAL_SESSION, SIGNED_IN, TOKEN_REFRESHED, SIGNED_OUT) and once from
+// init(). Work only restarts when the signed-in user actually changes, so an hourly token refresh
+// no longer reloads the device list or re-subscribes realtime.
+function handleSession(session) {
+  if (session) {
+    const userId = session.user?.id ?? null
+    if (userId && userId === currentUserId) return
+    currentUserId = userId
+    showLoggedIn()
+    // Deferred so no Supabase call runs inside the auth-state callback itself.
+    setTimeout(() => {
+      loadDevices()
+      startRealtime()
+      startRefreshTimer()
+    }, 0)
+  } else {
+    currentUserId = null
+    stopRefreshTimer()
+    stopRealtime()
+    devices = []
+    renderDevices()
+    showLoggedOut('Masuk dengan akun Supabase kamu untuk mengontrol perangkat milikmu.')
+  }
+}
+
 async function init() {
   if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
-    showLoggedOut('Supabase belum dikonfigurasi. Isi VITE_SUPABASE_URL dan VITE_SUPABASE_ANON_KEY di web-controller/.env.local.')
+    showLoggedOut('Supabase belum dikonfigurasi. Isi VITE_SUPABASE_URL dan VITE_SUPABASE_ANON_KEY di web-controller/.env.local (lokal) atau di Vercel → Settings → Environment Variables, lalu redeploy.')
     return
   }
 
-  supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
+  try {
+    supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
+  } catch (error) {
+    showLoggedOut(`Konfigurasi Supabase tidak valid: ${error.message}`)
+    return
+  }
 
-  supabase.auth.onAuthStateChange((_event, session) => {
-    if (session) {
-      showLoggedIn()
-      loadDevices()
-      startRealtime()
-    } else {
-      showLoggedOut('Masuk dengan akun Supabase kamu untuk mengontrol perangkat milikmu.')
-      devices = []
-    }
-  })
+  supabase.auth.onAuthStateChange((_event, session) => handleSession(session))
 
   const { data: { session } } = await supabase.auth.getSession()
-  if (session) {
-    showLoggedIn()
-    loadDevices()
-    startRealtime()
-  } else {
-    showLoggedOut()
-  }
+  handleSession(session)
 }
 
 init()
