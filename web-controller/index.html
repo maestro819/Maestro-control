@@ -114,9 +114,10 @@
     <section class="detail-view" id="cameraView" hidden>
       <button class="back-button" data-back type="button">← Dashboard</button>
       <div class="detail-title"><div><div class="section-label">CAMERA MODULE</div><h2>Kamera</h2></div><span class="live-mark"><i></i> AUTO CONNECT</span></div>
-      <div class="camera-box"><div class="camera-scan"></div><span class="camera-placeholder">LIVE CAMERA</span><span class="camera-connecting" id="cameraState">Menghubungkan otomatis…</span></div>
+      <div class="camera-box"><div class="camera-scan"></div><span class="camera-placeholder">LIVE CAMERA</span><span class="camera-connecting" id="cameraState">Tekan tombol Foto untuk mengambil gambar.</span></div>
+      <img id="capturedPhoto" alt="Foto perangkat" hidden style="width:100%;border-radius:12px;margin-top:10px;display:block">
       <div class="camera-controls">
-        <select aria-label="Kamera"><option>DEPAN</option><option>BELAKANG</option></select>
+        <select id="cameraSelect" aria-label="Kamera"><option value="DEPAN">DEPAN</option><option value="BELAKANG">BELAKANG</option></select>
         <select aria-label="Mode kamera"><option>NORMAL</option><option>LOW LIGHT</option><option>FLASH</option></select>
       </div>
       <div class="capture-row">
