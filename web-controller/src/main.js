@@ -286,6 +286,34 @@ async function startRealtime() {
     .subscribe()
 }
 
+async function startCommandsRealtime() {
+  await stopCommandsRealtime()
+  commandsChannel = supabase
+    .channel('commands-updates')
+    .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'device_commands' }, (payload) => {
+      const row = payload.new
+      if (!row || row.id !== activePhotoCommandId) return
+      if (row.status === 'completed') {
+        const url = row.result?.url
+        if (url) { showCapturedPhoto(url) } else { setStatus('Foto diambil tapi URL tidak tersedia.', 'error') }
+        activePhotoCommandId = null
+      } else if (row.status === 'failed') {
+        const err = row.result?.error || 'tidak diketahui'
+        setStatus(`Foto gagal: ${err}`, 'error')
+        if (els.cameraState) els.cameraState.textContent = `Gagal: ${err}`
+        activePhotoCommandId = null
+      }
+    })
+    .subscribe()
+}
+
+async function stopCommandsRealtime() {
+  if (!commandsChannel || !supabase) return
+  const ch = commandsChannel
+  commandsChannel = null
+  try { await supabase.removeChannel(ch) } catch { /* ignore */ }
+}
+
 function startRefreshTimer() {
   stopRefreshTimer()
   refreshTimer = setInterval(() => loadDevices({ silent: true }), REFRESH_MS)
