@@ -34,14 +34,19 @@ const els = {
   screenButtons: [...document.querySelectorAll('[data-screen]')],
   backButtons: [...document.querySelectorAll('[data-back]')],
   mapLabel: document.querySelector('#locationView .map-label'),
+  cameraState: document.querySelector('#cameraState'),
+  cameraSelect: document.querySelector('#cameraSelect'),
+  capturedPhoto: document.querySelector('#capturedPhoto'),
 }
 
 let devices = []
 let supabase = null
 let activeScreen = 'dashboardView'
 let realtimeChannel = null
+let commandsChannel = null
 let refreshTimer = null
 let currentUserId = null
+let activePhotoCommandId = null
 
 function setStatus(message, kind = '') {
   els.status.textContent = message
@@ -163,7 +168,15 @@ function showScreen(screenId) {
   window.scrollTo({ top: 0, behavior: 'smooth' })
 }
 
-els.device.addEventListener('change', () => renderDevice(selectedDevice()))
+els.device.addEventListener('change', () => {
+  renderDevice(selectedDevice())
+  // Reset tampilan kamera saat ganti perangkat
+  if (els.capturedPhoto) els.capturedPhoto.hidden = true
+  if (els.cameraState) els.cameraState.textContent = 'Tekan tombol Foto untuk mengambil gambar.'
+  activePhotoCommandId = null
+  const dev = selectedDevice()
+  if (dev) loadLastPhoto(dev.id)
+})
 
 els.accessToggle.addEventListener('click', () => {
   const expanded = els.accessToggle.getAttribute('aria-expanded') === 'true'
@@ -181,18 +194,67 @@ els.backButtons.forEach((button) => {
 
 document.querySelector('[data-command="location"]').addEventListener('click', () => sendCommand('location'))
 
-// Camera/microphone controls intentionally stay as visual placeholders only.
-// See project README: remote camera/mic activation and notification mirroring
-// are out of scope for this build.
-document.querySelector('#captureButton').addEventListener('click', () => {
-  setStatus('Fitur pengambilan foto jarak jauh belum diaktifkan pada build ini.', 'info')
-})
+document.querySelector('#captureButton').addEventListener('click', () => sendPhotoCommand())
 document.querySelector('#recordButton').addEventListener('click', () => {
-  setStatus('Fitur rekam kamera jarak jauh belum diaktifkan pada build ini.', 'info')
+  setStatus('Fitur rekam video belum tersedia di build ini.', 'info')
 })
 document.querySelector('#audioRecordButton').addEventListener('click', () => {
-  setStatus('Fitur rekam audio jarak jauh belum diaktifkan pada build ini.', 'info')
+  setStatus('Fitur rekam audio belum tersedia di build ini.', 'info')
 })
+
+// ---- Fungsi kamera -----------------------------------------------------------------------
+
+async function sendPhotoCommand() {
+  const device = selectedDevice()
+  if (!device || !supabase) return
+  if (!device.camera_permission) {
+    setStatus('Kamera belum diizinkan di perangkat target. Buka app Maestro Target dan berikan izin kamera.', 'error')
+    return
+  }
+  const facing = els.cameraSelect?.value === 'DEPAN' ? 'front' : 'back'
+  if (els.capturedPhoto) els.capturedPhoto.hidden = true
+  if (els.cameraState) els.cameraState.textContent = 'Mengirim perintah foto… perangkat akan merespons dalam ~15 detik.'
+  setStatus('Mengirim perintah foto ke perangkat…')
+
+  const { data, error } = await supabase
+    .from('device_commands')
+    .insert({ device_id: device.id, command: 'take_photo', params: { camera: facing } })
+    .select('id')
+    .single()
+
+  if (error) {
+    setStatus(`Perintah gagal: ${error.message}`, 'error')
+    if (els.cameraState) els.cameraState.textContent = 'Gagal mengirim perintah.'
+    return
+  }
+  activePhotoCommandId = data.id
+  setStatus('Perintah foto dikirim. Menunggu perangkat merespons (maks ~15 detik)…', 'success')
+}
+
+function showCapturedPhoto(url) {
+  if (els.capturedPhoto) {
+    els.capturedPhoto.src = url
+    els.capturedPhoto.hidden = false
+  }
+  if (els.cameraState) els.cameraState.textContent = 'Foto berhasil diambil!'
+  setStatus('Foto dari perangkat berhasil diterima.', 'success')
+}
+
+async function loadLastPhoto(deviceId) {
+  if (!supabase || !deviceId) return
+  const { data } = await supabase
+    .from('device_commands')
+    .select('result, completed_at')
+    .eq('device_id', deviceId)
+    .eq('command', 'take_photo')
+    .eq('status', 'completed')
+    .order('completed_at', { ascending: false })
+    .limit(1)
+  if (data && data.length > 0) {
+    const url = data[0].result?.url
+    if (url) showCapturedPhoto(url)
+  }
+}
 
 // ---- Auth gate --------------------------------------------------------------------------
 
@@ -305,12 +367,14 @@ function handleSession(session) {
     setTimeout(() => {
       loadDevices()
       startRealtime()
+      startCommandsRealtime()
       startRefreshTimer()
     }, 0)
   } else {
     currentUserId = null
     stopRefreshTimer()
     stopRealtime()
+    stopCommandsRealtime()
     devices = []
     renderDevices()
     showLoggedOut('Masuk dengan akun Supabase kamu untuk mengontrol perangkat milikmu.')
