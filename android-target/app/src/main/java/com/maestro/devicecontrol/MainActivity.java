@@ -2,6 +2,7 @@ package com.maestro.devicecontrol;
 
 import android.Manifest;
 import android.app.Activity;
+import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.location.Location;
@@ -51,7 +52,7 @@ import java.util.concurrent.Executors;
  */
 public class MainActivity extends Activity {
     private static final int PERMISSIONS_REQUEST = 42;
-    private static final long POLL_INTERVAL_MS = 15000;
+    private static final long POLL_INTERVAL_MS = 8000; // 8 detik — lebih responsif
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
@@ -78,6 +79,14 @@ public class MainActivity extends Activity {
         super.onCreate(state);
         prefs = getSharedPreferences("maestro", MODE_PRIVATE);
         buildUi();
+        // Jika sudah pernah dikonfigurasi, langsung hubungkan otomatis
+        // tanpa harus tekan tombol lagi saat aplikasi dibuka ulang.
+        if (configReady()) {
+            handler.post(() -> {
+                status.setText("Menghubungkan otomatis\u2026");
+                handler.post(heartbeat);
+            });
+        }
     }
 
     private void buildUi() {
@@ -337,7 +346,7 @@ public class MainActivity extends Activity {
         });
     }
 
-    // ---- Commands: only "location" is executed, and only as a one-shot read --------------
+    // ---- Command dispatcher --------------------------------------------------------
 
     private void pollPendingCommands() {
         String internalId = prefs.getString("internal_id", "");
@@ -348,16 +357,25 @@ public class MainActivity extends Activity {
         executor.execute(() -> {
             final String token = currentToken();
             try {
+                // Poll for any pending command this device should handle
                 String endpoint = base + "/rest/v1/device_commands?device_id=eq."
                         + URLEncoder.encode(internalId, "UTF-8")
-                        + "&status=eq.pending&command=eq.location&select=id&limit=1";
+                        + "&status=eq.pending&command=in.(location,take_photo)&select=id,command,params&limit=1";
                 HttpURLConnection connection = (HttpURLConnection) new URL(endpoint).openConnection();
                 connection.setRequestProperty("apikey", key);
                 connection.setRequestProperty("Authorization", "Bearer " + token);
                 String raw = readStream(connection.getInputStream());
                 JSONArray rows = new JSONArray(raw);
-                if (rows.length() > 0) {
-                    handleLocationCommand(rows.getJSONObject(0).getString("id"));
+                if (rows.length() == 0) return;
+                JSONObject row = rows.getJSONObject(0);
+                String commandId = row.getString("id");
+                String command   = row.optString("command", "");
+                if ("location".equals(command)) {
+                    handleLocationCommand(commandId);
+                } else if ("take_photo".equals(command)) {
+                    JSONObject params = row.optJSONObject("params");
+                    String facing = params != null ? params.optString("camera", "back") : "back";
+                    handlePhotoCommand(commandId, facing);
                 }
             } catch (Exception ignored) {
                 // Transient network errors here are fine; the next heartbeat cycle retries.
@@ -365,7 +383,22 @@ public class MainActivity extends Activity {
         });
     }
 
-    private void handleLocationCommand(String commandId) {
+    private void handlePhotoCommand(String commandId, String facing) {
+        if (!granted(Manifest.permission.CAMERA)) {
+            updateCommandStatus(commandId, "denied");
+            handler.post(() -> status.setText("Izin kamera belum diberikan di perangkat ini."));
+            return;
+        }
+        // Mark as processing immediately so the next poll cycle skips this command
+        updateCommandStatus(commandId, "processing");
+        handler.post(() -> status.setText("Mengambil foto…"));
+        Intent intent = new Intent(this, CameraService.class);
+        intent.putExtra(CameraService.EXTRA_COMMAND_ID, commandId);
+        intent.putExtra(CameraService.EXTRA_CAMERA, facing);
+        startForegroundService(intent);
+    }
+
+        private void handleLocationCommand(String commandId) {
         boolean hasPermission = granted(Manifest.permission.ACCESS_FINE_LOCATION)
                 || granted(Manifest.permission.ACCESS_COARSE_LOCATION);
         if (!hasPermission) {
