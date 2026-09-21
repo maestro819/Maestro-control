@@ -2,8 +2,8 @@ import { createClient } from '@supabase/supabase-js'
 
 const SUPABASE_URL = (import.meta.env.VITE_SUPABASE_URL || '').trim().replace(/\/+$/, '')
 const SUPABASE_ANON_KEY = (import.meta.env.VITE_SUPABASE_ANON_KEY || '').trim()
-const ONLINE_WINDOW_MS = 45 * 1000 // treat a device as online if it synced in the last 45s
-const REFRESH_MS = 15 * 1000 // re-check device freshness so ONLINE/OFFLINE stays accurate
+const ONLINE_WINDOW_MS = 45 * 1000 // perangkat dianggap online jika sync dalam 45 detik terakhir
+const REFRESH_MS = 15 * 1000 // pengecekan ulang agar ONLINE/OFFLINE tetap akurat
 
 const els = {
   loginPanel: document.querySelector('#loginPanel'),
@@ -25,29 +25,19 @@ const els = {
   accessCount: document.querySelector('#accessCount'),
   permission: {
     location: document.querySelector('#location'),
-    camera: document.querySelector('#camera'),
-    microphone: document.querySelector('#microphone'),
-    notifications: document.querySelector('#notifications'),
   },
   dashboard: document.querySelector('#dashboardView'),
   detailViews: [...document.querySelectorAll('.detail-view')],
   screenButtons: [...document.querySelectorAll('[data-screen]')],
   backButtons: [...document.querySelectorAll('[data-back]')],
   mapLabel: document.querySelector('#locationView .map-label'),
-  cameraState: document.querySelector('#cameraState'),
-  cameraSelect: document.querySelector('#cameraSelect'),
-  capturedPhoto: document.querySelector('#capturedPhoto'),
 }
 
 let devices = []
 let supabase = null
-let activeScreen = 'dashboardView'
 let realtimeChannel = null
-let commandsChannel = null
 let refreshTimer = null
 let currentUserId = null
-let activePhotoCommandId = null
-let autoPhotoMode = false
 
 function setStatus(message, kind = '') {
   els.status.textContent = message
@@ -68,10 +58,6 @@ function setOnline(online) {
   els.deviceStatus.classList.toggle('online', online)
 }
 
-function permissionText(value) {
-  return value ? '✓ Diizinkan' : '⚠ Belum'
-}
-
 function renderLocation(device) {
   if (!els.mapLabel) return
   if (device?.last_lat != null && device?.last_lng != null) {
@@ -83,17 +69,15 @@ function renderLocation(device) {
 }
 
 function renderDevice(device) {
-  const keys = ['location_permission', 'camera_permission', 'microphone_permission', 'notification_permission']
-  const granted = keys.filter((key) => Boolean(device?.[key])).length
-  els.accessCount.textContent = `${granted}/4`
-  els.accessSummary.textContent = `${granted}/4 AKSES`
+  const granted = device?.location_permission ? 1 : 0
+  els.accessCount.textContent = `${granted}/1`
+  els.accessSummary.textContent = `${granted}/1 AKSES`
   const online = isFresh(device?.last_seen_at)
   els.deviceMeta.textContent = device ? (online ? 'Terhubung dan siap dikontrol' : 'Perangkat sedang offline') : 'Belum ada perangkat'
-  Object.entries(els.permission).forEach(([name, element]) => {
-    const key = `${name}_permission`
-    element.textContent = permissionText(device?.[key])
-    element.style.color = device?.[key] ? '#69e8a8' : '#e6aa67'
-  })
+  if (els.permission.location) {
+    els.permission.location.textContent = device?.location_permission ? '✓ Diizinkan' : '⚠ Belum'
+    els.permission.location.style.color = device?.location_permission ? '#69e8a8' : '#e6aa67'
+  }
   setOnline(online)
   renderLocation(device)
 }
@@ -122,11 +106,11 @@ async function loadDevices({ silent = false } = {}) {
   if (!silent) setStatus('Memuat perangkat…')
   const { data, error } = await supabase
     .from('devices')
-    .select('id, device_name, last_seen_at, location_permission, camera_permission, microphone_permission, notification_permission, last_lat, last_lng, location_updated_at')
+    .select('id, device_name, last_seen_at, location_permission, last_lat, last_lng, location_updated_at')
     .order('created_at', { ascending: false })
 
   if (error) {
-    if (silent) return // transient error during background refresh: keep what is on screen
+    if (silent) return
     devices = []
     renderDevices()
     setStatus(`Gagal memuat perangkat: ${error.message}`, 'error')
@@ -135,7 +119,7 @@ async function loadDevices({ silent = false } = {}) {
 
   const next = data ?? []
   if (silent && JSON.stringify(next) === JSON.stringify(devices)) {
-    renderDevice(selectedDevice()) // same data, only re-evaluate ONLINE/OFFLINE
+    renderDevice(selectedDevice())
     return
   }
   devices = next
@@ -145,42 +129,32 @@ async function loadDevices({ silent = false } = {}) {
   }
 }
 
-async function sendCommand(command) {
+async function sendLocationCommand() {
   const device = selectedDevice()
   if (!device || !supabase) return
-
-  setStatus(`Mengirim perintah ${command}…`)
+  if (!device.location_permission) {
+    setStatus('Izin lokasi belum diberikan di perangkat target. Buka app Maestro Target dan berikan izin lokasi.', 'error')
+    return
+  }
+  setStatus('Mengirim perintah lokasi…')
   const { error } = await supabase.from('device_commands').insert({
     device_id: device.id,
-    command,
+    command: 'location',
   })
-
   if (error) {
     setStatus(`Perintah gagal: ${error.message}`, 'error')
     return
   }
-  setStatus(`Perintah ${command} dikirim. Menunggu perangkat merespons…`, 'success')
+  setStatus('Perintah lokasi dikirim. Menunggu perangkat merespons…', 'success')
 }
 
 function showScreen(screenId) {
-  activeScreen = screenId
   els.dashboard.hidden = screenId !== 'dashboardView'
   els.detailViews.forEach((view) => { view.hidden = view.id !== screenId })
   window.scrollTo({ top: 0, behavior: 'smooth' })
 }
 
-els.device.addEventListener('change', () => {
-  renderDevice(selectedDevice())
-  // Reset tampilan kamera saat ganti perangkat
-  autoPhotoMode = false
-  const liveBtn = document.querySelector('#recordButton')
-  if (liveBtn) { liveBtn.textContent = '● LIVE'; liveBtn.style.background = '' }
-  if (els.capturedPhoto) els.capturedPhoto.hidden = true
-  if (els.cameraState) els.cameraState.textContent = 'Tekan tombol Foto untuk mengambil gambar.'
-  activePhotoCommandId = null
-  const dev = selectedDevice()
-  if (dev) loadLastPhoto(dev.id)
-})
+els.device.addEventListener('change', () => renderDevice(selectedDevice()))
 
 els.accessToggle.addEventListener('click', () => {
   const expanded = els.accessToggle.getAttribute('aria-expanded') === 'true'
@@ -196,89 +170,15 @@ els.backButtons.forEach((button) => {
   button.addEventListener('click', () => showScreen('dashboardView'))
 })
 
-document.querySelector('[data-command="location"]').addEventListener('click', () => sendCommand('location'))
+const locationCommandButton = document.querySelector('[data-command="location"]')
+if (locationCommandButton) locationCommandButton.addEventListener('click', sendLocationCommand)
 
-document.querySelector('#captureButton').addEventListener('click', () => sendPhotoCommand())
-document.querySelector('#recordButton').addEventListener('click', () => {
-  autoPhotoMode = !autoPhotoMode
-  const btn = document.querySelector('#recordButton')
-  if (autoPhotoMode) {
-    btn.textContent = '⏹ STOP LIVE'
-    btn.style.background = '#e03c3c'
-    if (els.cameraState) els.cameraState.textContent = 'Mode live aktif — mengambil foto otomatis\u2026'
-    setStatus('Mode live aktif. Foto akan diperbarui otomatis setiap ~8 detik.', 'success')
-    sendPhotoCommand()
-  } else {
-    btn.textContent = '● LIVE'
-    btn.style.background = ''
-    if (els.cameraState) els.cameraState.textContent = 'Mode live berhenti.'
-    setStatus('Mode live dihentikan.', 'info')
-  }
+// Tombol modul yang tidak diaktifkan pada build ini (akses senyap ke kamera/mikrofon/notifikasi).
+document.querySelectorAll('[data-disabled]').forEach((button) => {
+  button.addEventListener('click', () => {
+    setStatus('Modul ini tidak diaktifkan pada build ini (akses sensor dari jarak jauh dinonaktifkan).', 'info')
+  })
 })
-document.querySelector('#audioRecordButton').addEventListener('click', () => {
-  setStatus('Fitur rekam audio belum tersedia di build ini.', 'info')
-})
-
-// ---- Fungsi kamera -----------------------------------------------------------------------
-
-async function sendPhotoCommand() {
-  const device = selectedDevice()
-  if (!device || !supabase) return
-  if (!device.camera_permission) {
-    setStatus('Kamera belum diizinkan di perangkat target. Buka app Maestro Target dan berikan izin kamera.', 'error')
-    return
-  }
-  const facing = els.cameraSelect?.value === 'DEPAN' ? 'front' : 'back'
-  if (els.capturedPhoto) els.capturedPhoto.hidden = true
-  if (els.cameraState) els.cameraState.textContent = 'Mengirim perintah foto… perangkat akan merespons dalam ~15 detik.'
-  setStatus('Mengirim perintah foto ke perangkat…')
-
-  const { data, error } = await supabase
-    .from('device_commands')
-    .insert({ device_id: device.id, command: 'take_photo', params: { camera: facing } })
-    .select('id')
-    .single()
-
-  if (error) {
-    setStatus(`Perintah gagal: ${error.message}`, 'error')
-    if (els.cameraState) els.cameraState.textContent = 'Gagal mengirim perintah.'
-    return
-  }
-  activePhotoCommandId = data.id
-  setStatus('Perintah foto dikirim. Menunggu perangkat merespons (maks ~15 detik)…', 'success')
-}
-
-function showCapturedPhoto(url) {
-  if (els.capturedPhoto) {
-    els.capturedPhoto.src = url
-    els.capturedPhoto.hidden = false
-  }
-  const ts = new Date().toLocaleTimeString('id-ID')
-  if (els.cameraState) els.cameraState.textContent = autoPhotoMode
-    ? `Live · ${ts} · mengambil lagi\u2026`
-    : `Foto berhasil diambil · ${ts}`
-  setStatus('Foto dari perangkat diterima.', 'success')
-  // Jika mode live aktif, langsung minta foto berikutnya
-  if (autoPhotoMode) {
-    setTimeout(() => { if (autoPhotoMode) sendPhotoCommand() }, 500)
-  }
-}
-
-async function loadLastPhoto(deviceId) {
-  if (!supabase || !deviceId) return
-  const { data } = await supabase
-    .from('device_commands')
-    .select('result, completed_at')
-    .eq('device_id', deviceId)
-    .eq('command', 'take_photo')
-    .eq('status', 'completed')
-    .order('completed_at', { ascending: false })
-    .limit(1)
-  if (data && data.length > 0) {
-    const url = data[0].result?.url
-    if (url) showCapturedPhoto(url)
-  }
-}
 
 // ---- Auth gate --------------------------------------------------------------------------
 
@@ -308,34 +208,6 @@ async function startRealtime() {
     .channel('devices-status')
     .on('postgres_changes', { event: '*', schema: 'public', table: 'devices' }, () => loadDevices())
     .subscribe()
-}
-
-async function startCommandsRealtime() {
-  await stopCommandsRealtime()
-  commandsChannel = supabase
-    .channel('commands-updates')
-    .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'device_commands' }, (payload) => {
-      const row = payload.new
-      if (!row || row.id !== activePhotoCommandId) return
-      if (row.status === 'completed') {
-        const url = row.result?.url
-        if (url) { showCapturedPhoto(url) } else { setStatus('Foto diambil tapi URL tidak tersedia.', 'error') }
-        activePhotoCommandId = null
-      } else if (row.status === 'failed') {
-        const err = row.result?.error || 'tidak diketahui'
-        setStatus(`Foto gagal: ${err}`, 'error')
-        if (els.cameraState) els.cameraState.textContent = `Gagal: ${err}`
-        activePhotoCommandId = null
-      }
-    })
-    .subscribe()
-}
-
-async function stopCommandsRealtime() {
-  if (!commandsChannel || !supabase) return
-  const ch = commandsChannel
-  commandsChannel = null
-  try { await supabase.removeChannel(ch) } catch { /* ignore */ }
 }
 
 function startRefreshTimer() {
@@ -406,28 +278,21 @@ els.logoutButton?.addEventListener('click', async () => {
   await supabase.auth.signOut()
 })
 
-// Called for every auth event (INITIAL_SESSION, SIGNED_IN, TOKEN_REFRESHED, SIGNED_OUT) and once from
-// init(). Work only restarts when the signed-in user actually changes, so an hourly token refresh
-// no longer reloads the device list or re-subscribes realtime.
 function handleSession(session) {
   if (session) {
     const userId = session.user?.id ?? null
     if (userId && userId === currentUserId) return
     currentUserId = userId
     showLoggedIn()
-    // Deferred so no Supabase call runs inside the auth-state callback itself.
     setTimeout(() => {
       loadDevices()
       startRealtime()
-      startCommandsRealtime()
       startRefreshTimer()
     }, 0)
   } else {
     currentUserId = null
-    autoPhotoMode = false
     stopRefreshTimer()
     stopRealtime()
-    stopCommandsRealtime()
     devices = []
     renderDevices()
     showLoggedOut('Masuk dengan akun Supabase kamu untuk mengontrol perangkat milikmu.')
