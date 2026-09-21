@@ -54,13 +54,10 @@
           <div class="section-label">PERMISSION MONITOR</div>
           <h2>Akses Perangkat</h2>
         </div>
-        <span id="accessCount" class="access-count">0/4</span>
+        <span id="accessCount" class="access-count">0/1</span>
       </div>
       <div class="access-grid">
         <div class="access-item"><span>📍 Lokasi</span><b id="location">—</b></div>
-        <div class="access-item"><span>📷 Kamera</span><b id="camera">—</b></div>
-        <div class="access-item"><span>🎙️ Mikrofon</span><b id="microphone">—</b></div>
-        <div class="access-item"><span>🔔 Notifikasi</span><b id="notifications">—</b></div>
       </div>
     </section>
 
@@ -74,31 +71,31 @@
       </div>
 
       <div class="feature-grid">
-        <button class="feature-card camera-card" data-screen="cameraView" type="button">
-          <span class="feature-icon">📷</span>
-          <span class="feature-name">Kamera</span>
-          <span class="feature-status">● LIVE ACCESS</span>
-          <span class="feature-arrow">↗</span>
-        </button>
-
         <button class="feature-card location-card" data-screen="locationView" type="button">
           <span class="feature-icon">📍</span>
           <span class="feature-name">Lokasi</span>
-          <span class="feature-status">● LIVE TRACK</span>
+          <span class="feature-status">● LOKASI TERAKHIR</span>
           <span class="feature-arrow">↗</span>
         </button>
 
-        <button class="feature-card microphone-card" data-screen="microphoneView" type="button">
+        <button class="feature-card camera-card disabled-card" data-disabled type="button">
+          <span class="feature-icon">📷</span>
+          <span class="feature-name">Kamera</span>
+          <span class="feature-status">○ NONAKTIF</span>
+          <span class="feature-arrow">↗</span>
+        </button>
+
+        <button class="feature-card microphone-card disabled-card" data-disabled type="button">
           <span class="feature-icon">🎙️</span>
           <span class="feature-name">Suara</span>
-          <span class="feature-status">● AUDIO READY</span>
+          <span class="feature-status">○ NONAKTIF</span>
           <span class="feature-arrow">↗</span>
         </button>
 
-        <button class="feature-card notifications-card" data-screen="notificationsView" type="button">
+        <button class="feature-card notifications-card disabled-card" data-disabled type="button">
           <span class="feature-icon">🔔</span>
           <span class="feature-name">Notifikasi</span>
-          <span class="feature-status">● NOTIFICATION CENTER</span>
+          <span class="feature-status">○ NONAKTIF</span>
           <span class="feature-arrow">↗</span>
         </button>
       </div>
@@ -106,41 +103,11 @@
 
     <section class="detail-view" id="locationView" hidden>
       <button class="back-button" data-back type="button">← Dashboard</button>
-      <div class="detail-title"><div><div class="section-label">LOCATION MODULE</div><h2>Lokasi Perangkat</h2></div><span class="live-mark"><i></i> LIVE</span></div>
-      <div class="map-box"><div class="map-grid"></div><div class="map-pin">📍</div><div class="map-label">LIVE POSITION<br><small>Menunggu data lokasi</small></div></div>
+      <div class="detail-title"><div><div class="section-label">LOCATION MODULE</div><h2>Lokasi Perangkat</h2></div><span class="live-mark"><i></i> READY</span></div>
+      <div class="map-box"><div class="map-grid"></div><div class="map-pin">📍</div><div class="map-label">LAST KNOWN POSITION<br><small>Menunggu data lokasi</small></div></div>
       <div class="detail-actions"><button class="primary-button" data-command="location" type="button">↻ Refresh Lokasi</button></div>
     </section>
 
-    <section class="detail-view" id="cameraView" hidden>
-      <button class="back-button" data-back type="button">← Dashboard</button>
-      <div class="detail-title"><div><div class="section-label">CAMERA MODULE</div><h2>Kamera</h2></div><span class="live-mark"><i></i> AUTO CONNECT</span></div>
-      <div class="camera-box"><div class="camera-scan"></div><span class="camera-placeholder">LIVE CAMERA</span><span class="camera-connecting" id="cameraState">Tekan tombol Foto untuk mengambil gambar.</span></div>
-      <img id="capturedPhoto" alt="Foto perangkat" hidden style="width:100%;border-radius:12px;margin-top:10px;display:block">
-      <div class="camera-controls">
-        <select id="cameraSelect" aria-label="Kamera"><option value="DEPAN">DEPAN</option><option value="BELAKANG">BELAKANG</option></select>
-        <select aria-label="Mode kamera"><option>NORMAL</option><option>LOW LIGHT</option><option>FLASH</option></select>
-      </div>
-      <div class="capture-row">
-        <button class="secondary-button" type="button" id="captureButton">◎ Foto</button>
-        <button class="record-button" type="button" id="recordButton"><span></span> RECORD</button>
-      </div>
-    </section>
-
-    <section class="detail-view" id="microphoneView" hidden>
-      <button class="back-button" data-back type="button">← Dashboard</button>
-      <div class="detail-title"><div><div class="section-label">AUDIO MODULE</div><h2>Suara</h2></div><span class="live-mark"><i></i> AUTO CONNECT</span></div>
-      <div class="audio-box"><div class="waveform" id="waveform"></div><div class="audio-status" id="audioState">Menghubungkan otomatis…</div><strong id="timer">00:00</strong></div>
-      <div class="volume"><span>VOLUME</span><div class="volume-track"><i></i></div><b>72%</b></div>
-      <button class="record-button wide" type="button" id="audioRecordButton"><span></span> RECORD</button>
-    </section>
-
-    <section class="detail-view" id="notificationsView" hidden>
-      <button class="back-button" data-back type="button">← Dashboard</button>
-      <div class="detail-title"><div><div class="section-label">NOTIFICATION MODULE</div><h2>Notification Center</h2></div><span class="live-mark"><i></i> SYNC</span></div>
-      <div class="notification-list" id="notificationList">
-        <div class="empty-state"><div>🔔</div><h3>Belum ada notifikasi</h3><p>Notifikasi dari perangkat akan tampil di sini.</p></div>
-      </div>
-    </section>
     <button class="back-button" id="logoutButton" type="button">Keluar</button>
     </div>
   </main>
