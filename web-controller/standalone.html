@@ -1,0 +1,277 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Maestro Control — Dashboard</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+  :root{--bg:#0b1622;--panel:#0f1e2e;--line:#1e3a54;--text:#dceaff;--muted:#7fa3c4;--accent:#3da9fc;--ok:#37d67a;--warn:#e6aa67;--err:#ff6b6b}
+  *{box-sizing:border-box;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+  body{margin:0;background:var(--bg);color:var(--text);padding:16px}
+  .app{max-width:760px;margin:0 auto}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:16px;margin-bottom:14px}
+  h1{font-size:20px;margin:0 0 4px}
+  h2{font-size:16px;margin:0 0 8px}
+  .label{font-size:11px;letter-spacing:1.5px;color:var(--muted);margin-bottom:8px}
+  input,select{width:100%;padding:12px;border-radius:10px;border:1px solid var(--line);background:#0a1522;color:var(--text);margin-bottom:8px}
+  button{cursor:pointer;border:none;border-radius:10px;padding:12px 16px;font-weight:600;background:var(--accent);color:#04121f}
+  button.ghost{background:transparent;border:1px solid var(--line);color:var(--text)}
+  button:disabled{opacity:.5;cursor:not-allowed}
+  .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .status{font-size:13px;color:var(--muted);margin-top:8px;min-height:18px}
+  .badge{display:inline-block;padding:4px 10px;border-radius:999px;font-size:11px;font-weight:700}
+  .badge.online{background:rgba(55,214,122,.15);color:var(--ok)}
+  .badge.offline{background:rgba(127,163,196,.15);color:var(--muted)}
+  #map{height:300px;border-radius:12px;margin-top:10px;background:#0a1522}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .perm{display:flex;justify-content:space-between;padding:10px;border:1px solid var(--line);border-radius:10px}
+  .photo{width:100%;border-radius:10px;margin-top:8px;background:#0a1522}
+  audio{width:100%;margin-top:8px}
+  .notif-list{max-height:280px;overflow:auto;margin-top:8px}
+  .notif{display:flex;justify-content:space-between;gap:8px;padding:10px;border:1px solid var(--line);border-radius:10px;margin-bottom:6px;font-size:13px}
+  .notif small{color:var(--muted);white-space:nowrap}
+  .hidden{display:none!important}
+  .muted{color:var(--muted);font-size:12px}
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="card">
+    <div class="label">MAESTRO CONTROL</div>
+    <h1>Control Center</h1>
+    <div class="muted">Dashboard tanpa Vercel — cukup buka file ini di browser.</div>
+  </div>
+
+  <div class="card" id="configCard">
+    <h2>1. Hubungkan Supabase</h2>
+    <div class="muted">Tempel dari Supabase → Project Settings → API. Data disimpan di browser ini saja.</div>
+    <input id="cfgUrl" placeholder="Supabase URL (https://xxxx.supabase.co)">
+    <input id="cfgKey" placeholder="anon / publishable key (eyJ...)">
+    <button id="cfgSave">Simpan koneksi</button>
+    <div class="status" id="cfgStatus"></div>
+  </div>
+
+  <div class="card hidden" id="loginCard">
+    <h2>2. Masuk</h2>
+    <input id="loginEmail" type="email" placeholder="Email">
+    <input id="loginPassword" type="password" placeholder="Password">
+    <button id="loginBtn">Masuk</button>
+    <div class="status" id="loginStatus"></div>
+  </div>
+
+  <div id="appBody" class="hidden">
+    <div class="card">
+      <div class="label">PERANGKAT</div>
+      <div class="row">
+        <select id="deviceSelect" style="flex:1"></select>
+        <span id="deviceBadge" class="badge offline">OFFLINE</span>
+      </div>
+      <div class="status" id="mainStatus">—</div>
+      <button class="ghost" id="logoutBtn" style="margin-top:8px">Keluar</button>
+    </div>
+
+    <div class="card">
+      <h2>Status Akses</h2>
+      <div class="grid">
+        <div class="perm"><span>📍 Lokasi</span><b id="permLocation">—</b></div>
+        <div class="perm"><span>📷 Kamera</span><b id="permCamera">—</b></div>
+        <div class="perm"><span>🎙️ Mikrofon</span><b id="permMicrophone">—</b></div>
+        <div class="perm"><span>🔔 Notifikasi</span><b id="permNotifications">—</b></div>
+      </div>
+      <div class="muted" style="margin-top:8px">Izin notifikasi diaktifkan manual di HP target (Pengaturan → Akses notifikasi).</div>
+    </div>
+
+    <div class="card">
+      <h2>Lokasi (Find My Phone)</h2>
+      <button id="refreshLocation">↻ Refresh Lokasi</button>
+      <div id="map"></div>
+      <div class="muted" id="locMeta" style="margin-top:8px">Belum ada data lokasi</div>
+    </div>
+
+    <div class="card">
+      <h2>Kamera</h2>
+      <div class="muted">Saat ditekan, HP target memotret secara <b>transparan</b> (notifikasi + indikator kamera muncul).</div>
+      <div class="row" style="margin-top:10px">
+        <select id="cameraFacing" style="flex:1">
+          <option value="back">Kamera belakang</option>
+          <option value="front">Kamera depan</option>
+        </select>
+        <button id="captureBtn">📷 Ambil Foto</button>
+      </div>
+      <img id="capturedPhoto" class="photo hidden" alt="Foto dari perangkat">
+      <div class="status" id="cameraStatus"></div>
+    </div>
+
+    <div class="card">
+      <h2>Suara</h2>
+      <div class="muted">Merekam maksimal <b>30 detik</b> di HP target, transparan (notifikasi + indikator mikrofon muncul).</div>
+      <button id="recordBtn" style="margin-top:10px">🎙 Rekam Suara (30 detik)</button>
+      <audio id="recordedClip" controls class="hidden"></audio>
+      <div class="status" id="audioStatus"></div>
+    </div>
+
+    <div class="card">
+      <h2>Notifikasi</h2>
+      <div class="muted">Hanya <b>nama aplikasi + waktu</b> (isi/tulisan notifikasi tidak diambil).</div>
+      <div class="notif-list" id="notifList"><div class="muted">Belum ada data.</div></div>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+(function(){
+  var cfg = { url: localStorage.getItem('mst_url') || '', key: localStorage.getItem('mst_key') || '' };
+  var sb = null, user = null, devices = [], selected = null;
+  var onlineWindow = 45*1000, refreshTimer = null, channel = null, map = null, marker = null;
+  var $ = function(id){ return document.getElementById(id); };
+  function setText(el, t){ if(el) el.textContent = t; }
+
+  function initClient(){
+    if(!cfg.url || !cfg.key) return false;
+    try { sb = window.supabase.createClient(cfg.url.replace(/\/+$/,''), cfg.key); return true; }
+    catch(e){ setText($('cfgStatus'), 'Konfigurasi tidak valid: ' + e.message); return false; }
+  }
+  $('cfgUrl').value = cfg.url; $('cfgKey').value = cfg.key;
+  $('cfgSave').onclick = function(){
+    cfg.url = $('cfgUrl').value.trim(); cfg.key = $('cfgKey').value.trim();
+    if(!cfg.url || !cfg.key){ setText($('cfgStatus'),'Isi URL dan anon key dulu.'); return; }
+    localStorage.setItem('mst_url', cfg.url); localStorage.setItem('mst_key', cfg.key);
+    if(initClient()){ setText($('cfgStatus'),'Tersimpan. Silakan masuk.'); boot(); }
+  };
+
+  $('loginBtn').onclick = async function(){
+    if(!sb){ setText($('loginStatus'),'Supabase belum dihubungkan.'); return; }
+    setText($('loginStatus'),'Memproses…');
+    var res = await sb.auth.signInWithPassword({ email: $('loginEmail').value.trim().toLowerCase(), password: $('loginPassword').value });
+    if(res.error){ setText($('loginStatus'),'Gagal masuk: ' + res.error.message); }
+    else { $('loginPassword').value=''; }
+  };
+  $('logoutBtn').onclick = function(){ if(sb) sb.auth.signOut(); };
+
+  function showLoggedIn(s){ user = s.user; $('loginCard').classList.add('hidden'); $('appBody').classList.remove('hidden'); loadDevices(); startRealtime(); startTimer(); }
+  function showLoggedOut(){ user=null; devices=[]; selected=null; stopTimer(); stopRealtime(); $('appBody').classList.add('hidden'); $('loginCard').classList.remove('hidden'); setText($('loginStatus'),'Masuk dengan akun Supabase.'); }
+
+  async function boot(){
+    if(!initClient()) return;
+    sb.auth.onAuthStateChange(function(_e, s){ if(s && (!user || s.user.id!==user.id)) showLoggedIn(s); else if(!s) showLoggedOut(); });
+    var r = await sb.auth.getSession();
+    if(r.data.session) showLoggedIn(r.data.session); else showLoggedOut();
+  }
+
+  function fmt(v){ return v ? '✓ Diizinkan' : '⚠ Belum'; }
+  function isFresh(t){ return t ? (Date.now() - new Date(t).getTime() < onlineWindow) : false; }
+
+  async function loadDevices(){
+    var r = await sb.from('devices').select('id,device_name,last_seen_at,location_permission,camera_permission,microphone_permission,notification_permission,last_lat,last_lng,location_updated_at').order('created_at',{ascending:false});
+    if(r.error){ setText($('mainStatus'),'Gagal memuat: '+r.error.message); return; }
+    devices = r.data || [];
+    var sel = $('deviceSelect'); var prev = sel.value; sel.innerHTML='';
+    if(!devices.length){ sel.innerHTML='<option>Belum ada perangkat</option>'; renderDevice(null); return; }
+    devices.forEach(function(d){ var o=document.createElement('option'); o.value=d.id; o.textContent=d.device_name; sel.appendChild(o); });
+    sel.value = devices.some(function(d){return d.id===prev;}) ? prev : devices[0].id;
+    selectFromValue(); renderDevice(selected);
+  }
+  function selectFromValue(){ selected = devices.find(function(d){ return d.id === $('deviceSelect').value; }) || null; }
+  $('deviceSelect').onchange = function(){ selectFromValue(); renderDevice(selected); loadNotifications(); };
+
+  function renderDevice(d){
+    var online = isFresh(d && d.last_seen_at);
+    var b = $('deviceBadge'); b.textContent = online?'ONLINE':'OFFLINE'; b.className='badge '+(online?'online':'offline');
+    setText($('permLocation'), d ? fmt(d.location_permission) : '—');
+    setText($('permCamera'), d ? fmt(d.camera_permission) : '—');
+    setText($('permMicrophone'), d ? fmt(d.microphone_permission) : '—');
+    setText($('permNotifications'), d ? fmt(d.notification_permission) : '—');
+    if(d && d.last_lat!=null && d.last_lng!=null){ drawMap(d.last_lat, d.last_lng); }
+    else if(map){ map.remove(); map=null; marker=null; setText($('locMeta'),'Belum ada data lokasi'); }
+  }
+
+  function drawMap(lat,lng){
+    setText($('locMeta'), 'Koordinat: '+lat.toFixed(5)+', '+lng.toFixed(5));
+    if(!map){ map = L.map('map').setView([lat,lng],16); L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19}).addTo(map); marker = L.marker([lat,lng]).addTo(map); }
+    else { map.setView([lat,lng],16); marker.setLatLng([lat,lng]); }
+    setTimeout(function(){ map.invalidateSize(); }, 100);
+  }
+
+  async function sendCommand(command, params, statusEl, okMsg){
+    if(!selected) return false;
+    var payload = { device_id: selected.id, command: command };
+    if(params) payload.params = params;
+    var r = await sb.from('device_commands').insert(payload);
+    if(r.error){ setText(statusEl,'Gagal: '+r.error.message); return false; }
+    setText(statusEl, okMsg);
+    return true;
+  }
+
+  $('refreshLocation').onclick = function(){
+    if(selected && !selected.location_permission){ setText($('mainStatus'),'Izin lokasi belum diberikan di HP target.'); return; }
+    sendCommand('location', null, $('mainStatus'), 'Perintah lokasi dikirim. Menunggu respons…');
+  };
+
+  $('captureBtn').onclick = function(){
+    if(selected && !selected.camera_permission){ setText($('cameraStatus'),'Izin kamera belum diberikan di HP target.'); return; }
+    sendCommand('take_photo', { facing: $('cameraFacing').value }, $('cameraStatus'), 'Perintah foto dikirim. Foto muncul otomatis saat siap…');
+  };
+
+  $('recordBtn').onclick = function(){
+    if(selected && !selected.microphone_permission){ setText($('audioStatus'),'Izin mikrofon belum diberikan di HP target.'); return; }
+    sendCommand('microphone', null, $('audioStatus'), 'Perintah rekam dikirim. Rekaman muncul otomatis saat siap…');
+  };
+
+  async function showPhoto(path){
+    if(!path) return;
+    var signed = await sb.storage.from('device-photos').createSignedUrl(path, 3600);
+    if(signed.error){ setText($('cameraStatus'),'Foto tersimpan, gagal membuat tautan: '+signed.error.message); return; }
+    var img = $('capturedPhoto'); img.src = signed.data.signedUrl; img.classList.remove('hidden');
+    setText($('cameraStatus'),'Foto terbaru ditampilkan.');
+  }
+  async function showClip(path){
+    if(!path) return;
+    var signed = await sb.storage.from('device-clips').createSignedUrl(path, 3600);
+    if(signed.error){ setText($('audioStatus'),'Rekaman tersimpan, gagal membuat tautan: '+signed.error.message); return; }
+    var a = $('recordedClip'); a.src = signed.data.signedUrl; a.classList.remove('hidden');
+    setText($('audioStatus'),'Rekaman terbaru siap diputar.');
+  }
+
+  async function loadNotifications(){
+    if(!selected){ return; }
+    var r = await sb.from('device_notifications').select('app_label,package_name,posted_at').eq('device_id', selected.id).order('posted_at',{ascending:false}).limit(30);
+    var box = $('notifList'); box.innerHTML='';
+    if(r.error){ box.innerHTML='<div class="muted">Gagal memuat: '+r.error.message+'</div>'; return; }
+    if(!r.data || !r.data.length){ box.innerHTML='<div class="muted">Belum ada data.</div>'; return; }
+    r.data.forEach(function(n){
+      var div = document.createElement('div'); div.className='notif';
+      var when = n.posted_at ? new Date(n.posted_at).toLocaleString('id-ID') : '';
+      div.innerHTML = '<span>'+ (n.app_label||n.package_name||'-') +'</span><small>'+ when +'</small>';
+      box.appendChild(div);
+    });
+  }
+
+  async function startRealtime(){
+    stopRealtime();
+    channel = sb.channel('mst')
+      .on('postgres_changes',{event:'*',schema:'public',table:'devices'},function(){ loadDevices(); })
+      .on('postgres_changes',{event:'UPDATE',schema:'public',table:'device_commands'},function(p){
+        var row = p.new || {};
+        if(row.status==='completed' && row.result && row.result.path){
+          if(row.command==='take_photo'){ showPhoto(row.result.path); setText($('cameraStatus'),'Foto selesai.'); }
+          if(row.command==='microphone'){ showClip(row.result.path); setText($('audioStatus'),'Rekaman selesai.'); }
+        }
+        if(row.status==='denied') setText($('mainStatus'),'Ditolak: izin belum diberikan di HP target.');
+        if(row.status==='failed') setText($('mainStatus'),'Gagal diproses di HP target.');
+      })
+      .on('postgres_changes',{event:'INSERT',schema:'public',table:'device_notifications'},function(){ loadNotifications(); })
+      .subscribe();
+  }
+  function stopRealtime(){ if(channel){ sb.removeChannel(channel); channel=null; } }
+
+  function startTimer(){ stopTimer(); refreshTimer = setInterval(function(){ loadDevices(); }, 15000); }
+  function stopTimer(){ if(refreshTimer){ clearInterval(refreshTimer); refreshTimer=null; } }
+
+  boot();
+})();
+</script>
+</body>
+</html>
