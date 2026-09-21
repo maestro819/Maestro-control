@@ -2,21 +2,28 @@ package com.maestro.devicecontrol;
 
 import android.Manifest;
 import android.app.Activity;
+import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.location.Location;
 import android.location.LocationManager;
+import android.net.ConnectivityManager;
+import android.net.Network;
+import android.net.NetworkCapabilities;
+import android.net.NetworkRequest;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.provider.Settings;
 import android.text.InputType;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
+import androidx.core.app.NotificationManagerCompat;
 import androidx.core.content.ContextCompat;
 
 import org.json.JSONArray;
@@ -35,24 +42,20 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 /**
- * Target-side app.
+ * Target-side app (semua fitur konsep aktif).
  *
- * What this does:
- *  - Registers this device against the owner's Supabase project (upsert on device_token).
- *  - Reports the CURRENT OS permission status (granted/not granted) for location, camera,
- *    microphone, and notifications. It never turns the camera or microphone on by itself.
- *  - When the controller sends a "location" command, this app takes ONE last-known-location
- *    reading (only if location permission is already granted) and reports it back - similar
- *    to a "share my location" button in a family-locator app. There is no continuous/live
- *    tracking loop and no background service.
+ *  - Lokasi: satu pembacaan saat diminta.
+ *  - Kamera: CameraService (foreground, notifikasi + indikator terlihat).
+ *  - Mikrofon: MicService (foreground, notifikasi + indikator, maks 30 detik).
+ *  - Notifikasi: NotificationLoggerService mencatat METADATA (aplikasi + waktu) saja.
+ *  - Auto-reconnect: NetworkCallback + onResume.
  *
- * Camera, microphone, and notification-mirroring commands are intentionally NOT implemented
- * here. Wiring those up to actually capture photo/video/audio or read notification content
- * would turn this into a remote surveillance tool, which is out of scope.
+ * Semua akses sensor bersifat TRANSPARAN (ada tanda terlihat di perangkat) dan hanya jalan
+ * setelah izin diberikan pengguna perangkat.
  */
 public class MainActivity extends Activity {
     private static final int PERMISSIONS_REQUEST = 42;
-    private static final long POLL_INTERVAL_MS = 8000; // 8 detik — lebih responsif
+    private static final long POLL_INTERVAL_MS = 8000;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
@@ -74,19 +77,57 @@ public class MainActivity extends Activity {
     private EditText passwordInput;
     private EditText tokenInput;
 
+    private ConnectivityManager connectivityManager;
+    private ConnectivityManager.NetworkCallback networkCallback;
+
     @Override
     protected void onCreate(Bundle state) {
         super.onCreate(state);
         prefs = getSharedPreferences("maestro", MODE_PRIVATE);
         buildUi();
-        // Jika sudah pernah dikonfigurasi, langsung hubungkan otomatis
-        // tanpa harus tekan tombol lagi saat aplikasi dibuka ulang.
+        registerNetworkCallback();
         if (configReady()) {
             handler.post(() -> {
                 status.setText("Menghubungkan otomatis\u2026");
-                handler.post(heartbeat);
+                restartHeartbeat();
             });
         }
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        if (configReady()) restartHeartbeat();
+    }
+
+    private void registerNetworkCallback() {
+        connectivityManager = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
+        if (connectivityManager == null) return;
+        NetworkRequest request = new NetworkRequest.Builder()
+                .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                .build();
+        networkCallback = new ConnectivityManager.NetworkCallback() {
+            @Override public void onAvailable(Network network) {
+                if (configReady()) restartHeartbeat();
+            }
+            @Override public void onLost(Network network) {
+                handler.post(() -> status.setText("Koneksi terputus. Akan menyambung otomatis saat online."));
+            }
+        };
+        try { connectivityManager.registerNetworkCallback(request, networkCallback); } catch (Exception ignored) {}
+    }
+
+    private void restartHeartbeat() {
+        handler.removeCallbacks(heartbeat);
+        handler.post(heartbeat);
+    }
+
+    private boolean hasNetwork() {
+        if (connectivityManager == null) return true;
+        Network active = connectivityManager.getActiveNetwork();
+        if (active == null) return false;
+        NetworkCapabilities caps = connectivityManager.getNetworkCapabilities(active);
+        return caps != null && caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET);
     }
 
     private void buildUi() {
@@ -101,15 +142,17 @@ public class MainActivity extends Activity {
         box.addView(title);
 
         TextView note = new TextView(this);
-        note.setText("Perangkat ini hanya melaporkan status izin dan lokasi saat diminta. Kamera dan mikrofon tidak pernah diaktifkan dari jarak jauh.");
+        note.setText("Aplikasi ini melayani permintaan dashboard: lokasi, foto, rekaman suara, dan "
+                + "ringkasan notifikasi. Setiap akses kamera/mikrofon menampilkan notifikasi + indikator "
+                + "di layar ini. Saat jaringan kembali, perangkat menyambung otomatis.");
         box.addView(note);
 
         urlInput = field("Supabase URL", prefs.getString("url", ""));
         keyInput = field("Supabase anon key", prefs.getString("key", ""));
-        deviceInput = field("Device token (bebas, unik)", prefs.getString("device", UUID.randomUUID().toString()));
-        emailInput = field("Email akun Supabase (cara termudah)", prefs.getString("email", ""));
+        deviceInput = field("Device token (unik, biarkan apa adanya)", prefs.getString("device", UUID.randomUUID().toString()));
+        emailInput = field("Email akun Supabase", prefs.getString("email", ""));
         emailInput.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS);
-        passwordInput = field("Password (tidak disimpan, hanya untuk masuk)", "");
+        passwordInput = field("Password (tidak disimpan)", "");
         passwordInput.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
         tokenInput = field("User access token (opsional bila pakai email/password)", prefs.getString("token", ""));
         box.addView(urlInput);
@@ -123,6 +166,11 @@ public class MainActivity extends Activity {
         save.setText("Simpan dan minta izin");
         save.setOnClickListener(view -> saveAndRequestPermissions());
         box.addView(save);
+
+        Button notifAccess = new Button(this);
+        notifAccess.setText("Aktifkan akses notifikasi (buka Pengaturan)");
+        notifAccess.setOnClickListener(view -> openNotificationAccessSettings());
+        box.addView(notifAccess);
 
         status = new TextView(this);
         status.setText("Belum terhubung");
@@ -141,6 +189,15 @@ public class MainActivity extends Activity {
         return input;
     }
 
+    private void openNotificationAccessSettings() {
+        try {
+            Intent intent = new Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS);
+            startActivity(intent);
+        } catch (Exception e) {
+            handler.post(() -> status.setText("Buka Pengaturan → Notifikasi → Akses notifikasi untuk mengizinkan."));
+        }
+    }
+
     private void saveAndRequestPermissions() {
         final String newToken = tokenInput.getText().toString().trim();
         final boolean tokenChangedByHand = !newToken.equals(prefs.getString("token", ""));
@@ -150,10 +207,7 @@ public class MainActivity extends Activity {
                 .putString("device", deviceInput.getText().toString().trim())
                 .putString("email", emailInput.getText().toString().trim())
                 .putString("token", newToken);
-        if (tokenChangedByHand) {
-            // A token pasted by hand replaces any email/password session.
-            editor.remove("refresh").remove("expires_at");
-        }
+        if (tokenChangedByHand) editor.remove("refresh").remove("expires_at");
         editor.apply();
 
         final String email = emailInput.getText().toString().trim();
@@ -187,21 +241,20 @@ public class MainActivity extends Activity {
 
     private void requestRuntimePermissions() {
         if (Build.VERSION.SDK_INT >= 23) {
-            requestPermissions(new String[] {
-                    Manifest.permission.ACCESS_FINE_LOCATION,
-                    Manifest.permission.ACCESS_COARSE_LOCATION,
-                    Manifest.permission.CAMERA,
-                    Manifest.permission.RECORD_AUDIO,
-                    Manifest.permission.POST_NOTIFICATIONS
-            }, PERMISSIONS_REQUEST);
+            java.util.List<String> wanted = new java.util.ArrayList<>();
+            wanted.add(Manifest.permission.ACCESS_FINE_LOCATION);
+            wanted.add(Manifest.permission.ACCESS_COARSE_LOCATION);
+            wanted.add(Manifest.permission.CAMERA);
+            wanted.add(Manifest.permission.RECORD_AUDIO);
+            if (Build.VERSION.SDK_INT >= 33) wanted.add(Manifest.permission.POST_NOTIFICATIONS);
+            requestPermissions(wanted.toArray(new String[0]), PERMISSIONS_REQUEST);
         } else {
             onPermissionsUpdated();
         }
     }
 
-    // ---- Session handling (email/password sign-in + automatic token refresh) --------------
+    // ---- Session handling -----------------------------------------------------------
 
-    /** Calls Supabase Auth /token. Returns null on success (session saved), else an error message. */
     private String requestSession(String grantType, JSONObject body) {
         try {
             final String base = prefs.getString("url", "").replaceAll("/$", "");
@@ -224,7 +277,6 @@ public class MainActivity extends Activity {
                     JSONObject err = new JSONObject(raw);
                     message = err.optString("msg", err.optString("error_description", err.optString("message", raw)));
                 } catch (Exception notJson) {
-                    // keep the raw body
                 }
                 return "HTTP " + code + ": " + message;
             }
@@ -233,6 +285,7 @@ public class MainActivity extends Activity {
             prefs.edit()
                     .putString("token", session.getString("access_token"))
                     .putString("refresh", session.optString("refresh_token", ""))
+                    .putString("user_id", session.optJSONObject("user") != null ? session.getJSONObject("user").optString("id", "") : "")
                     .putLong("expires_at", System.currentTimeMillis() / 1000L + session.optLong("expires_in", 3600L))
                     .apply();
             return null;
@@ -241,7 +294,6 @@ public class MainActivity extends Activity {
         }
     }
 
-    /** Returns a usable access token, refreshing it first when a refresh token is stored and it is about to expire. */
     private synchronized String currentToken() {
         String token = prefs.getString("token", "");
         String refresh = prefs.getString("refresh", "");
@@ -258,7 +310,6 @@ public class MainActivity extends Activity {
                     token = prefs.getString("token", token);
                 }
             } catch (Exception ignored) {
-                // fall through with the old token; the request will report the HTTP error
             }
         }
         return token;
@@ -267,19 +318,24 @@ public class MainActivity extends Activity {
     @Override
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
-        if (requestCode == PERMISSIONS_REQUEST) {
-            onPermissionsUpdated();
-        }
+        if (requestCode == PERMISSIONS_REQUEST) onPermissionsUpdated();
     }
 
     private void onPermissionsUpdated() {
         status.setText("Izin diperbarui. Menghubungkan ke Supabase...");
-        handler.removeCallbacks(heartbeat);
-        handler.post(heartbeat);
+        restartHeartbeat();
     }
 
     private boolean granted(String permission) {
         return ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED;
+    }
+
+    private boolean notificationAccessEnabled() {
+        try {
+            return NotificationManagerCompat.getEnabledListenerPackages(this).contains(getPackageName());
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     private boolean configReady() {
@@ -296,6 +352,10 @@ public class MainActivity extends Activity {
             handler.post(() -> status.setText("Isi Supabase URL, anon key, device token, lalu email + password (atau access token)."));
             return;
         }
+        if (!hasNetwork()) {
+            handler.post(() -> status.setText("Tidak ada koneksi. Menunggu jaringan kembali (akan menyambung otomatis)\u2026"));
+            return;
+        }
         final String base = prefs.getString("url", "").replaceAll("/$", "");
         final String deviceToken = prefs.getString("device", "");
         final String key = prefs.getString("key", "");
@@ -310,8 +370,7 @@ public class MainActivity extends Activity {
                         granted(Manifest.permission.ACCESS_FINE_LOCATION) || granted(Manifest.permission.ACCESS_COARSE_LOCATION));
                 body.put("camera_permission", granted(Manifest.permission.CAMERA));
                 body.put("microphone_permission", granted(Manifest.permission.RECORD_AUDIO));
-                body.put("notification_permission",
-                        Build.VERSION.SDK_INT < 33 || granted(Manifest.permission.POST_NOTIFICATIONS));
+                body.put("notification_permission", notificationAccessEnabled());
                 body.put("last_seen_at", Instant.now().toString());
 
                 HttpURLConnection connection = (HttpURLConnection) new URL(
@@ -335,7 +394,7 @@ public class MainActivity extends Activity {
                         String internalId = rows.getJSONObject(0).getString("id");
                         prefs.edit().putString("internal_id", internalId).apply();
                     }
-                    handler.post(() -> status.setText("Tersinkron ke Supabase. Menunggu perintah lokasi (jika ada)."));
+                    handler.post(() -> status.setText("Tersinkron ke Supabase. Siap menerima perintah dashboard."));
                 } else {
                     final String errRaw = raw;
                     handler.post(() -> status.setText("Gagal sinkron (HTTP " + code + "): " + errRaw));
@@ -350,17 +409,16 @@ public class MainActivity extends Activity {
 
     private void pollPendingCommands() {
         String internalId = prefs.getString("internal_id", "");
-        if (internalId.isEmpty()) return; // not registered yet, syncDeviceStatus() runs first each cycle
+        if (internalId.isEmpty()) return;
 
         final String base = prefs.getString("url", "").replaceAll("/$", "");
         final String key = prefs.getString("key", "");
         executor.execute(() -> {
             final String token = currentToken();
             try {
-                // Poll for any pending command this device should handle
                 String endpoint = base + "/rest/v1/device_commands?device_id=eq."
                         + URLEncoder.encode(internalId, "UTF-8")
-                        + "&status=eq.pending&command=in.(location,take_photo)&select=id,command,params&limit=1";
+                        + "&status=eq.pending&command=in.(location,take_photo,microphone)&select=id,command,params&limit=1";
                 HttpURLConnection connection = (HttpURLConnection) new URL(endpoint).openConnection();
                 connection.setRequestProperty("apikey", key);
                 connection.setRequestProperty("Authorization", "Bearer " + token);
@@ -368,53 +426,32 @@ public class MainActivity extends Activity {
                 JSONArray rows = new JSONArray(raw);
                 if (rows.length() == 0) return;
                 JSONObject row = rows.getJSONObject(0);
+                String command = row.getString("command");
                 String commandId = row.getString("id");
-                String command   = row.optString("command", "");
                 if ("location".equals(command)) {
                     handleLocationCommand(commandId);
                 } else if ("take_photo".equals(command)) {
-                    JSONObject params = row.optJSONObject("params");
-                    String facing = params != null ? params.optString("camera", "back") : "back";
-                    handlePhotoCommand(commandId, facing);
+                    handleTakePhotoCommand(commandId, row.optJSONObject("params"));
+                } else if ("microphone".equals(command)) {
+                    handleMicrophoneCommand(commandId);
                 }
             } catch (Exception ignored) {
-                // Transient network errors here are fine; the next heartbeat cycle retries.
+                // Error jaringan sesaat; siklus berikutnya mencoba lagi.
             }
         });
     }
 
-    private void handlePhotoCommand(String commandId, String facing) {
-        if (!granted(Manifest.permission.CAMERA)) {
-            updateCommandStatus(commandId, "denied");
-            handler.post(() -> status.setText("Izin kamera belum diberikan di perangkat ini."));
-            return;
-        }
-        // Mark as processing immediately so the next poll cycle skips this command
-        updateCommandStatus(commandId, "processing");
-        handler.post(() -> status.setText("Mengambil foto…"));
-        Intent intent = new Intent(this, CameraService.class);
-        intent.putExtra(CameraService.EXTRA_COMMAND_ID, commandId);
-        intent.putExtra(CameraService.EXTRA_CAMERA, facing);
-        startForegroundService(intent);
-    }
-
-        private void handleLocationCommand(String commandId) {
+    private void handleLocationCommand(String commandId) {
         boolean hasPermission = granted(Manifest.permission.ACCESS_FINE_LOCATION)
                 || granted(Manifest.permission.ACCESS_COARSE_LOCATION);
-        if (!hasPermission) {
-            updateCommandStatus(commandId, "denied");
-            return;
-        }
+        if (!hasPermission) { updateCommandStatus(commandId, "denied"); return; }
 
         Location location = null;
         try {
             LocationManager lm = (LocationManager) getSystemService(LOCATION_SERVICE);
             location = lm.getLastKnownLocation(LocationManager.GPS_PROVIDER);
-            if (location == null) {
-                location = lm.getLastKnownLocation(LocationManager.NETWORK_PROVIDER);
-            }
+            if (location == null) location = lm.getLastKnownLocation(LocationManager.NETWORK_PROVIDER);
         } catch (SecurityException ignored) {
-            // permission was revoked between the check above and this call
         }
 
         if (location == null) {
@@ -422,10 +459,51 @@ public class MainActivity extends Activity {
             handler.post(() -> status.setText("Lokasi terakhir belum tersedia di perangkat ini."));
             return;
         }
-
         updateDeviceLocation(location.getLatitude(), location.getLongitude());
         updateCommandStatus(commandId, "completed");
-        handler.post(() -> status.setText("Lokasi dibagikan ke controller."));
+        handler.post(() -> status.setText("Lokasi dibagikan ke dashboard."));
+    }
+
+    private void handleTakePhotoCommand(String commandId, JSONObject params) {
+        if (!granted(Manifest.permission.CAMERA)) {
+            updateCommandStatus(commandId, "denied");
+            handler.post(() -> status.setText("Izin kamera belum diberikan; perintah foto ditolak."));
+            return;
+        }
+        String facing = params != null ? params.optString("facing", "back") : "back";
+        updateCommandStatus(commandId, "processing");
+
+        Intent intent = new Intent(this, CameraService.class);
+        intent.putExtra(CameraService.EXTRA_URL, prefs.getString("url", "").replaceAll("/$", ""));
+        intent.putExtra(CameraService.EXTRA_KEY, prefs.getString("key", ""));
+        intent.putExtra(CameraService.EXTRA_TOKEN, currentToken());
+        intent.putExtra(CameraService.EXTRA_USER, prefs.getString("user_id", ""));
+        intent.putExtra(CameraService.EXTRA_DEVICE, prefs.getString("internal_id", ""));
+        intent.putExtra(CameraService.EXTRA_COMMAND, commandId);
+        intent.putExtra(CameraService.EXTRA_FACING, facing);
+        if (Build.VERSION.SDK_INT >= 26) startForegroundService(intent); else startService(intent);
+
+        handler.post(() -> status.setText("Mengambil foto (notifikasi kamera muncul sebentar)\u2026"));
+    }
+
+    private void handleMicrophoneCommand(String commandId) {
+        if (!granted(Manifest.permission.RECORD_AUDIO)) {
+            updateCommandStatus(commandId, "denied");
+            handler.post(() -> status.setText("Izin mikrofon belum diberikan; perintah rekam ditolak."));
+            return;
+        }
+        updateCommandStatus(commandId, "processing");
+
+        Intent intent = new Intent(this, MicService.class);
+        intent.putExtra(MicService.EXTRA_URL, prefs.getString("url", "").replaceAll("/$", ""));
+        intent.putExtra(MicService.EXTRA_KEY, prefs.getString("key", ""));
+        intent.putExtra(MicService.EXTRA_TOKEN, currentToken());
+        intent.putExtra(MicService.EXTRA_USER, prefs.getString("user_id", ""));
+        intent.putExtra(MicService.EXTRA_DEVICE, prefs.getString("internal_id", ""));
+        intent.putExtra(MicService.EXTRA_COMMAND, commandId);
+        if (Build.VERSION.SDK_INT >= 26) startForegroundService(intent); else startService(intent);
+
+        handler.post(() -> status.setText("Merekam suara maks 30 detik (notifikasi mikrofon muncul)\u2026"));
     }
 
     private void updateDeviceLocation(double lat, double lng) {
@@ -465,9 +543,7 @@ public class MainActivity extends Activity {
             try {
                 JSONObject body = new JSONObject();
                 body.put("status", newStatus);
-                if ("completed".equals(newStatus)) {
-                    body.put("completed_at", Instant.now().toString());
-                }
+                if ("completed".equals(newStatus)) body.put("completed_at", Instant.now().toString());
 
                 HttpURLConnection connection = (HttpURLConnection) new URL(
                         base + "/rest/v1/device_commands?id=eq." + URLEncoder.encode(commandId, "UTF-8")).openConnection();
@@ -491,9 +567,7 @@ public class MainActivity extends Activity {
         BufferedReader reader = new BufferedReader(new InputStreamReader(in, StandardCharsets.UTF_8));
         StringBuilder result = new StringBuilder();
         String line;
-        while ((line = reader.readLine()) != null) {
-            result.append(line);
-        }
+        while ((line = reader.readLine()) != null) result.append(line);
         reader.close();
         return result.toString();
     }
@@ -501,6 +575,9 @@ public class MainActivity extends Activity {
     @Override
     protected void onDestroy() {
         handler.removeCallbacksAndMessages(null);
+        if (connectivityManager != null && networkCallback != null) {
+            try { connectivityManager.unregisterNetworkCallback(networkCallback); } catch (Exception ignored) {}
+        }
         executor.shutdownNow();
         super.onDestroy();
     }
