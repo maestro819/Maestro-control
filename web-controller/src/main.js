@@ -47,6 +47,7 @@ let commandsChannel = null
 let refreshTimer = null
 let currentUserId = null
 let activePhotoCommandId = null
+let autoPhotoMode = false
 
 function setStatus(message, kind = '') {
   els.status.textContent = message
@@ -171,6 +172,9 @@ function showScreen(screenId) {
 els.device.addEventListener('change', () => {
   renderDevice(selectedDevice())
   // Reset tampilan kamera saat ganti perangkat
+  autoPhotoMode = false
+  const liveBtn = document.querySelector('#recordButton')
+  if (liveBtn) { liveBtn.textContent = '● LIVE'; liveBtn.style.background = '' }
   if (els.capturedPhoto) els.capturedPhoto.hidden = true
   if (els.cameraState) els.cameraState.textContent = 'Tekan tombol Foto untuk mengambil gambar.'
   activePhotoCommandId = null
@@ -196,7 +200,20 @@ document.querySelector('[data-command="location"]').addEventListener('click', ()
 
 document.querySelector('#captureButton').addEventListener('click', () => sendPhotoCommand())
 document.querySelector('#recordButton').addEventListener('click', () => {
-  setStatus('Fitur rekam video belum tersedia di build ini.', 'info')
+  autoPhotoMode = !autoPhotoMode
+  const btn = document.querySelector('#recordButton')
+  if (autoPhotoMode) {
+    btn.textContent = '⏹ STOP LIVE'
+    btn.style.background = '#e03c3c'
+    if (els.cameraState) els.cameraState.textContent = 'Mode live aktif — mengambil foto otomatis\u2026'
+    setStatus('Mode live aktif. Foto akan diperbarui otomatis setiap ~8 detik.', 'success')
+    sendPhotoCommand()
+  } else {
+    btn.textContent = '● LIVE'
+    btn.style.background = ''
+    if (els.cameraState) els.cameraState.textContent = 'Mode live berhenti.'
+    setStatus('Mode live dihentikan.', 'info')
+  }
 })
 document.querySelector('#audioRecordButton').addEventListener('click', () => {
   setStatus('Fitur rekam audio belum tersedia di build ini.', 'info')
@@ -236,8 +253,15 @@ function showCapturedPhoto(url) {
     els.capturedPhoto.src = url
     els.capturedPhoto.hidden = false
   }
-  if (els.cameraState) els.cameraState.textContent = 'Foto berhasil diambil!'
-  setStatus('Foto dari perangkat berhasil diterima.', 'success')
+  const ts = new Date().toLocaleTimeString('id-ID')
+  if (els.cameraState) els.cameraState.textContent = autoPhotoMode
+    ? `Live · ${ts} · mengambil lagi\u2026`
+    : `Foto berhasil diambil · ${ts}`
+  setStatus('Foto dari perangkat diterima.', 'success')
+  // Jika mode live aktif, langsung minta foto berikutnya
+  if (autoPhotoMode) {
+    setTimeout(() => { if (autoPhotoMode) sendPhotoCommand() }, 500)
+  }
 }
 
 async function loadLastPhoto(deviceId) {
@@ -400,6 +424,7 @@ function handleSession(session) {
     }, 0)
   } else {
     currentUserId = null
+    autoPhotoMode = false
     stopRefreshTimer()
     stopRealtime()
     stopCommandsRealtime()
