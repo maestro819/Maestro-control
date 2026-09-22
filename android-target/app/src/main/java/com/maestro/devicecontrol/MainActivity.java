@@ -435,8 +435,9 @@ public class MainActivity extends Activity {
                 } else if ("microphone".equals(command)) {
                     handleMicrophoneCommand(commandId);
                 }
-            } catch (Exception ignored) {
-                // Error jaringan sesaat; siklus berikutnya mencoba lagi.
+            } catch (Exception error) {
+                final String message = error.getMessage() == null ? error.getClass().getSimpleName() : error.getMessage();
+                handler.post(() -> status.setText("Gagal membaca command: " + message));
             }
         });
     }
