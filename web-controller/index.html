@@ -4,6 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1.0">
   <title>Maestro Control</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIINfQ3M3d2QK1H6e3X8lM1n1n0w8z5F7sE=" crossorigin="" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIINfQ3M3d2QK1H6e3X8lM1n1n0w8z5F7sE=" crossorigin="" />
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
@@ -78,21 +80,21 @@
           <span class="feature-arrow">↗</span>
         </button>
 
-        <button class="feature-card camera-card disabled-card" data-disabled type="button">
+        <button class="feature-card camera-card" data-screen="cameraView" type="button">
           <span class="feature-icon">📷</span>
           <span class="feature-name">Kamera</span>
-          <span class="feature-status">○ NONAKTIF</span>
+          <span class="feature-status">● MINTA FOTO</span>
           <span class="feature-arrow">↗</span>
         </button>
 
-        <button class="feature-card microphone-card disabled-card" data-disabled type="button">
+        <button class="feature-card microphone-card" data-screen="audioView" type="button">
           <span class="feature-icon">🎙️</span>
           <span class="feature-name">Suara</span>
-          <span class="feature-status">○ NONAKTIF</span>
+          <span class="feature-status">● MINTA REKAMAN</span>
           <span class="feature-arrow">↗</span>
         </button>
 
-        <button class="feature-card notifications-card disabled-card" data-disabled type="button">
+        <button class="feature-card notifications-card" data-disabled type="button">
           <span class="feature-icon">🔔</span>
           <span class="feature-name">Notifikasi</span>
           <span class="feature-status">○ NONAKTIF</span>
@@ -104,13 +106,43 @@
     <section class="detail-view" id="locationView" hidden>
       <button class="back-button" data-back type="button">← Dashboard</button>
       <div class="detail-title"><div><div class="section-label">LOCATION MODULE</div><h2>Lokasi Perangkat</h2></div><span class="live-mark"><i></i> READY</span></div>
-      <div class="map-box"><div class="map-grid"></div><div class="map-pin">📍</div><div class="map-label">LAST KNOWN POSITION<br><small>Menunggu data lokasi</small></div></div>
+      <div class="map-box"><div id="realMap" aria-label="Peta lokasi perangkat"></div><div class="map-label">LAST KNOWN POSITION<br><small>Menunggu data lokasi</small></div></div>
       <div class="detail-actions"><button class="primary-button" data-command="location" type="button">↻ Refresh Lokasi</button></div>
+    </section>
+
+    <section class="detail-view" id="cameraView" hidden>
+      <button class="back-button" data-back type="button">← Dashboard</button>
+      <div class="detail-title"><div><div class="section-label">CAMERA MODULE</div><h2>Foto Kamera</h2></div><span class="live-mark"><i></i> PERLU IZIN</span></div>
+      <div class="camera-box"><div class="camera-scan"></div><div class="camera-placeholder">FOTO DIAMBIL DI HP TARGET</div><div class="camera-connecting">Android menampilkan notifikasi dan indikator kamera.</div></div>
+      <div class="detail-actions"><button class="primary-button" data-command="take_photo" type="button">Ambil satu foto</button></div>
+    </section>
+
+    <section class="detail-view" id="audioView" hidden>
+      <button class="back-button" data-back type="button">← Dashboard</button>
+      <div class="detail-title"><div><div class="section-label">AUDIO MODULE</div><h2>Rekaman Suara</h2></div><span class="live-mark"><i></i> PERLU IZIN</span></div>
+      <div class="audio-box"><div class="waveform"></div><div class="audio-status">MAKSIMAL 30 DETIK</div><strong>HP TARGET</strong></div>
+      <div class="detail-actions"><button class="primary-button" data-command="microphone" type="button">Mulai rekaman</button></div>
+    </section>
+
+    <section class="detail-view" id="cameraView" hidden>
+      <button class="back-button" data-back type="button">← Dashboard</button>
+      <div class="detail-title"><div><div class="section-label">CAMERA MODULE</div><h2>Foto Kamera</h2></div><span class="live-mark"><i></i> PERLU IZIN</span></div>
+      <div class="camera-box"><div class="camera-scan"></div><div class="camera-placeholder">FOTO DIAMBIL DI HP TARGET</div><div class="camera-connecting">Android menampilkan notifikasi dan indikator kamera.</div></div>
+      <div class="detail-actions"><button class="primary-button" data-command="take_photo" type="button">Ambil satu foto</button></div>
+    </section>
+
+    <section class="detail-view" id="audioView" hidden>
+      <button class="back-button" data-back type="button">← Dashboard</button>
+      <div class="detail-title"><div><div class="section-label">AUDIO MODULE</div><h2>Rekaman Suara</h2></div><span class="live-mark"><i></i> PERLU IZIN</span></div>
+      <div class="audio-box"><div class="waveform"></div><div class="audio-status">MAKSIMAL 30 DETIK</div><strong>HP TARGET</strong></div>
+      <div class="detail-actions"><button class="primary-button" data-command="microphone" type="button">Mulai rekaman</button></div>
     </section>
 
     <button class="back-button" id="logoutButton" type="button">Keluar</button>
     </div>
   </main>
   <script type="module" src="/src/main.js"></script>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 </body>
 </html>
