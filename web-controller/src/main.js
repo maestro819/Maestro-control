@@ -31,6 +31,7 @@ const els = {
   screenButtons: [...document.querySelectorAll('[data-screen]')],
   backButtons: [...document.querySelectorAll('[data-back]')],
   mapLabel: document.querySelector('#locationView .map-label'),
+  realMap: document.querySelector('#realMap'),
 }
 
 let devices = []
@@ -38,6 +39,8 @@ let supabase = null
 let realtimeChannel = null
 let refreshTimer = null
 let currentUserId = null
+let leafletMap = null
+let leafletMarker = null
 
 function setStatus(message, kind = '') {
   els.status.textContent = message
@@ -61,8 +64,19 @@ function setOnline(online) {
 function renderLocation(device) {
   if (!els.mapLabel) return
   if (device?.last_lat != null && device?.last_lng != null) {
+    const lat = Number(device.last_lat), lng = Number(device.last_lng)
     const updated = device.location_updated_at ? new Date(device.location_updated_at).toLocaleString('id-ID') : '-'
-    els.mapLabel.innerHTML = `LAST KNOWN POSITION<br><small>${device.last_lat.toFixed(5)}, ${device.last_lng.toFixed(5)} · ${updated}</small>`
+    els.mapLabel.innerHTML = `LAST KNOWN POSITION<br><small>${lat.toFixed(5)}, ${lng.toFixed(5)} · ${updated}</small>`
+    if (window.L && els.realMap) {
+      if (!leafletMap) leafletMap = L.map(els.realMap).setView([lat, lng], 15)
+      else leafletMap.setView([lat, lng], 15)
+      if (!leafletMap._osmLayer) {
+        leafletMap._osmLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '&copy; OpenStreetMap contributors' }).addTo(leafletMap)
+      }
+      if (leafletMarker) leafletMarker.setLatLng([lat, lng])
+      else leafletMarker = L.marker([lat, lng]).addTo(leafletMap).bindPopup(`${device.device_name}<br>${lat.toFixed(5)}, ${lng.toFixed(5)}`).openPopup()
+      setTimeout(() => leafletMap.invalidateSize(), 50)
+    }
   } else {
     els.mapLabel.innerHTML = 'LAST KNOWN POSITION<br><small>Belum ada data lokasi</small>'
   }
@@ -106,7 +120,7 @@ async function loadDevices({ silent = false } = {}) {
   if (!silent) setStatus('Memuat perangkat…')
   const { data, error } = await supabase
     .from('devices')
-    .select('id, device_name, last_seen_at, location_permission, last_lat, last_lng, location_updated_at')
+    .select('id, device_name, last_seen_at, location_permission, camera_permission, microphone_permission, last_lat, last_lng, location_updated_at')
     .order('created_at', { ascending: false })
 
   if (error) {
@@ -129,23 +143,14 @@ async function loadDevices({ silent = false } = {}) {
   }
 }
 
-async function sendLocationCommand() {
+async function sendCommand(command) {
   const device = selectedDevice()
-  if (!device || !supabase) return
-  if (!device.location_permission) {
-    setStatus('Izin lokasi belum diberikan di perangkat target. Buka app Maestro Target dan berikan izin lokasi.', 'error')
-    return
-  }
-  setStatus('Mengirim perintah lokasi…')
-  const { error } = await supabase.from('device_commands').insert({
-    device_id: device.id,
-    command: 'location',
-  })
-  if (error) {
-    setStatus(`Perintah gagal: ${error.message}`, 'error')
-    return
-  }
-  setStatus('Perintah lokasi dikirim. Menunggu perangkat merespons…', 'success')
+  if (!device || !supabase) return setStatus('Pilih perangkat terlebih dahulu.', 'error')
+  const permission = { location: 'location_permission', take_photo: 'camera_permission', microphone: 'microphone_permission' }[command]
+  if (permission && !device[permission]) return setStatus(`Izin ${command === 'take_photo' ? 'kamera' : command === 'microphone' ? 'mikrofon' : 'lokasi'} belum diberikan di HP target.`, 'error')
+  setStatus(`Mengirim perintah ${command}…`)
+  const { error } = await supabase.from('device_commands').insert({ device_id: device.id, command })
+  setStatus(error ? `Perintah gagal: ${error.message}` : `Perintah ${command} dikirim. HP target wajib menyetujui/menampilkan indikator.`, error ? 'error' : 'success')
 }
 
 function showScreen(screenId) {
@@ -170,14 +175,11 @@ els.backButtons.forEach((button) => {
   button.addEventListener('click', () => showScreen('dashboardView'))
 })
 
-const locationCommandButton = document.querySelector('[data-command="location"]')
-if (locationCommandButton) locationCommandButton.addEventListener('click', sendLocationCommand)
-
-// Tombol modul yang tidak diaktifkan pada build ini (akses senyap ke kamera/mikrofon/notifikasi).
+document.querySelectorAll('[data-command]').forEach((button) => {
+  button.addEventListener('click', () => sendCommand(button.dataset.command))
+})
 document.querySelectorAll('[data-disabled]').forEach((button) => {
-  button.addEventListener('click', () => {
-    setStatus('Modul ini tidak diaktifkan pada build ini (akses sensor dari jarak jauh dinonaktifkan).', 'info')
-  })
+  button.addEventListener('click', () => setStatus('Pembacaan notifikasi belum tersedia pada dashboard.', 'info'))
 })
 
 // ---- Auth gate --------------------------------------------------------------------------
